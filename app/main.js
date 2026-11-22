@@ -69,6 +69,22 @@ function loadRun(id) {
   };
 }
 
+// 这个任务属于哪个项目：优先用计划里写明的 project；否则看助手们在哪个文件夹里干活
+function projectOf(r) {
+  const plan = r.plan || {};
+  if (plan.project) return { key: 'name:' + String(plan.project).trim().toLowerCase(), name: String(plan.project).trim() };
+  const cwds = r.agents.map((a) => a.cwd).filter((c) => c && !/\\Temp\\|scratchpad/i.test(c));
+  if (!cwds.length) return { key: '', name: '' };
+  const count = {};
+  cwds.forEach((c) => { const k = c.toLowerCase(); count[k] = (count[k] || 0) + 1; });
+  const top = Object.keys(count).sort((a, b) => count[b] - count[a])[0];
+  const base = path.basename(top);
+  // 临时文件夹名（如 scratch-2026-11-16-xxxx）不好认，改用任务标题里「：」前面的部分
+  const titlePrefix = String(plan.title || '').split(/[：:]/)[0].trim();
+  const name = /^scratch-|^tmp|^temp/i.test(base) && titlePrefix && titlePrefix !== plan.title ? titlePrefix : base;
+  return { key: 'dir:' + top, name };
+}
+
 function listRuns() {
   let ids = [];
   try { ids = fs.readdirSync(RUNS).filter((n) => fs.statSync(path.join(RUNS, n)).isDirectory()); } catch { return []; }
@@ -77,11 +93,31 @@ function listRuns() {
     const times = [mtime(path.join(RUNS, id, 'plan.json')), mtime(path.join(RUNS, id, 'notes.jsonl')), ...r.agents.map((a) => a._mtime)];
     const running = r.agents.some((a) => a.status === 'running');
     const attention = r.agents.some((a) => a.status === 'blocked' || a.status === 'question' || (a.status === 'running' && a.warnings > 0));
+    const proj = projectOf(r);
     return {
       id, title: (r.plan && r.plan.title) || id, updated: Math.max(...times, 0), running, attention, agentCount: r.agents.length,
       agents: r.agents.map((a) => ({ status: a.status, warnings: a.warnings || 0, handover: !!a.handover })),
+      projectKey: proj.key, projectName: proj.name,
     };
   }).sort((a, b) => b.updated - a.updated);
+}
+
+// ---------- 任务列表的整理：顺序、项目分组、置顶、归档（存在 runs/_layout.json） ----------
+const LAYOUT = path.join(RUNS, '_layout.json');
+function saveLayout(layout) {
+  try { fs.writeFileSync(LAYOUT, JSON.stringify(layout, null, 2)); return true; } catch { return false; }
+}
+// 删除：移到 Windows 回收站（只删指挥台里的任务记录，不碰项目文件）。运行中的任务不能删
+async function trashRuns(ids) {
+  const blocked = [];
+  for (const id of ids || []) {
+    if (!/^[\w一-龥.-]+$/.test(id) || id.startsWith('_')) continue;
+    const dir = path.join(RUNS, id);
+    if (!fs.existsSync(dir)) continue;
+    if (loadAgents(dir).some((a) => a.status === 'running')) { blocked.push(id); continue; }
+    try { await shell.trashItem(dir); } catch { blocked.push(id); }
+  }
+  return blocked;
 }
 
 // 调用调度器（用系统里的 node 运行，和窗口互不影响；窗口关了它也会继续跑）
@@ -217,6 +253,9 @@ app.whenReady().then(() => {
   ipcMain.handle('agent:stop', (_e, { run, name }) => stopAgent(run, name));
   ipcMain.handle('agent:reply', (_e, { run, name, text }) => replyAgent(run, name, text));
   ipcMain.handle('agent:open', (_e, { run, name, terminal }) => openAgent(run, name, terminal));
+  ipcMain.handle('layout:get', () => readJSON(LAYOUT, null));
+  ipcMain.handle('layout:set', (_e, layout) => saveLayout(layout));
+  ipcMain.handle('runs:trash', (_e, ids) => trashRuns(ids));
   ipcMain.handle('agent:diagnose', (_e, { run, name }) => diagnoseAgent(run, name));
   ipcMain.handle('agent:kill-stuck', (_e, { run, name }) => killStuckChild(run, name));
   ipcMain.handle('agent:restart', (_e, { run, name }) => restartAgent(run, name));

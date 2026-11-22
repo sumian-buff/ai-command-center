@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('console2', {
   openLink: (run, name) => ipcRenderer.invoke('agent:link', { run, name }),
   onSound: (cb) => ipcRenderer.on('sound', (_e, name) => cb(name)),
   diagnose: (run, name) => ipcRenderer.invoke('agent:diagnose', { run, name }),
+  getLayout: () => ipcRenderer.invoke('layout:get'),
+  setLayout: (layout) => ipcRenderer.invoke('layout:set', layout),
+  trashRuns: (ids) => ipcRenderer.invoke('runs:trash', ids),
   killStuck: (run, name) => ipcRenderer.invoke('agent:kill-stuck', { run, name }),
   restart: (run, name) => ipcRenderer.invoke('agent:restart', { run, name }),
 });

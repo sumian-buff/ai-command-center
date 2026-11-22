@@ -105,19 +105,8 @@ function runState(r) {
   return ['', st.length ? '已停下' : '规划中'];
 }
 const dotClass = (s) => ({ running: 'd-run', question: 'd-wait', blocked: 'd-block', done: 'd-done' }[s] || '');
-function renderSidebar(runs) {
-  const order = runs.map((r) => r.id).sort();
-  $('#run-count').textContent = `${runs.length} 项`;
-  $('#runs').innerHTML = runs.length ? runs.map((r) => {
-    const [cls, text] = runState(r);
-    const no = String(order.indexOf(r.id) + 1).padStart(2, '0');
-    return `<button class="run ${r.id === selected ? 'on' : ''}" data-run="${esc(r.id)}">
-      <div class="run-top"><span class="run-no">${no}</span><span class="run-state ${cls}">${text}</span></div>
-      <div class="run-title">${esc(r.title)}</div>
-      <div class="run-sub"><span>${(r.agents || []).length} 个助手</span><span class="dots">${(r.agents || []).map((a) => `<i class="${dotClass(a.status)}"></i>`).join('')}</span></div>
-    </button>`;
-  }).join('') : '<div class="side-empty">暂无任务</div>';
-}
+// 左侧任务列表交给 sidebar.js：项目分组、拖动排序、置顶、归档、删除
+function renderSidebar(runs) { window.consoleSidebar.render(runs); }
 function renderSummary(run) {
   const box = $('#summary');
   if (!run || !run.agents.length) { box.innerHTML = ''; return; }
@@ -482,8 +471,7 @@ async function tick() {
     const run = selected ? await api.getRun(selected) : null;
     if (run && currentRun && run.id !== currentRun.id) { for (const el of tiles.values()) el.remove(); tiles.clear(); }
     currentRun = run;
-    const sideSig = JSON.stringify([runs, selected]);
-    if (sideSig !== lastSide) { renderSidebar(runs); lastSide = sideSig; }
+    renderSidebar(runs); // 自己判断有没有变化，拖动或改名时不会重画
     const headSig = JSON.stringify([run && run.plan, run && run.notes.length, run && run.agents.map((a) => [a.status, a.warnings, a.handover, a.current]), notesOpen, cool, soundOn]);
     if (headSig !== lastHead) { renderHead(run); lastHead = headSig; }
     renderSummary(run);
@@ -620,6 +608,8 @@ window.addEventListener('resize', () => { if (currentRun) layoutWall(currentRun.
 if (api.onSound) api.onSound((name) => { if (soundOn) window.consoleSound.play(name); });
 
 applyCool();
-tick();
-setInterval(tick, 1200);
+window.consoleSidebar.init({ refresh: () => tick(), selected: () => selected }).then(() => {
+  tick();
+  setInterval(tick, 1200);
+});
 requestAnimationFrame(pump);

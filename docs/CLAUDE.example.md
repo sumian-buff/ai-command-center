@@ -30,7 +30,8 @@
 用户看不懂代码，但要实时看到进度、及时发现跑偏。派给其他助手的活，一律通过 `<AI指挥台目录>\dispatch.mjs` 启动：
 
 1. 每个新需求建一个任务 ID（如 `20261122-xhs`），写 `<AI指挥台目录>\runs\<任务ID>\plan.json`：
-   `{ "title": "…", "request": "用户原话", "steps": [ { "text": "…", "owner": "Codex", "status": "todo" } ] }`
+   `{ "project": "项目名", "title": "…", "request": "用户原话", "steps": [ { "text": "…", "owner": "Codex", "status": "todo" } ] }`
+   同一个项目的任务用同一个 `project` 名字，指挥台会把它们自动归到一组。
 2. 用 `node dispatch.mjs note --run <任务ID> --text …` 用大白话写下思路。**run / attach / note 会自动打开指挥台窗口。**
 3. 派活：提示写进 UTF-8 文件，后台运行
    `node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --name <显示名> --task <一句话任务> --cwd <工作目录> --prompt-file <提示文件> --step <N>`
