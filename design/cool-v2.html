@@ -1,0 +1,1443 @@
+<!--
+  设计思路 · 炫酷模式 v2（深海静谧舰桥 · 真实代码流版）
+  1. 与普通模式（normal-v2.html）共用完全一致的 1280×820 布局骨架、顶部轻量化三层信息区与左下角全局小结，真正体现“同一套界面，一键换皮肤、换内容”的产品结构。
+  2. 保留方向 B 的深岩板黑纵深层次、精密细线、光学准星边角与克制状态光，但把所有英文界面标签全部替换为简洁中文，让非程序员用户零理解门槛。
+  3. 监控墙每块画面顶部放大呈现一行大白话“正在做什么”，并配齐最近 5 分钟真实活跃度小波形与最后动态时长；下方整块换成真实执行的命令、网页抓取与代码 diff 滚动流，运行中的画面带有柔和缓慢滚屏与闪烁光标，悬停可暂停细看，底部选项按钮与回复框在深色背景下保持高对比醒目。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI指挥台 · 炫酷模式（v2）</title>
+<style>
+  :root {
+    --stage-bg: #070B0F;
+    --canvas-bg: #0D131A;
+    --sidebar-bg: #0A0F15;
+    --card-bg: #121A23;
+    --card-elev: #17212C;
+    --code-bg: #0B1016;
+
+    --ink-main: #E8F0F8;
+    --ink-sub: #9AA9BC;
+    --ink-muted: #62748A;
+
+    --line-outer: #2A394A;
+    --line-soft: #1D2835;
+    --line-hair: #223040;
+
+    /* 炫酷模式强调色：雷达青绿 */
+    --accent-main: #2DD4BF;
+    --accent-soft: rgba(45, 212, 191, 0.12);
+
+    /* 三家助手固定品牌色（与普通模式同一套图形标志，适配深色层次） */
+    --vendor-codex: #38BDF8;
+    --vendor-codex-soft: rgba(56, 189, 248, 0.13);
+    --vendor-agy: #F59E0B;
+    --vendor-agy-soft: rgba(245, 158, 11, 0.14);
+    --vendor-claude: #F0835A;
+    --vendor-claude-soft: rgba(240, 131, 90, 0.14);
+
+    /* 状态信号色 */
+    --st-run: #2DD4BF;
+    --st-run-bg: rgba(45, 212, 191, 0.12);
+    --st-wait: #F59E0B;
+    --st-wait-bg: rgba(245, 158, 11, 0.14);
+    --st-block: #F43F5E;
+    --st-block-bg: rgba(244, 63, 94, 0.15);
+    --st-done: #4ADE80;
+    --st-done-bg: rgba(74, 222, 128, 0.12);
+    --st-stale: #FBBF24;
+
+    /* 代码流语法色（克制易读） */
+    --code-ts: #54667B;
+    --code-cmd: #7DD3FC;
+    --code-ok: #4ADE80;
+    --code-add: #34D399;
+    --code-meta: #94A3B8;
+    --code-warn: #FBBF24;
+    --code-err: #FB7185;
+
+    --font-sans: "DengXian", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    --font-mono: "Cascadia Mono", "Consolas", monospace;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--stage-bg);
+    background-image: radial-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+    background-size: 24px 24px;
+    font-family: var(--font-sans);
+    color: var(--ink-main);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 1280 x 820 主窗口（与普通模式完全一致的骨架尺寸） */
+  .app-shell {
+    width: 1280px;
+    height: 820px;
+    max-width: 100vw;
+    max-height: 100vh;
+    background: var(--canvas-bg);
+    border: 1px solid var(--line-outer);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    display: grid;
+    grid-template-columns: 196px 1fr;
+    overflow: hidden;
+  }
+
+  /* ================= 左侧窄栏（同骨架，全中文） ================= */
+  .sidebar {
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--line-soft);
+    display: flex;
+    flex-direction: column;
+    padding: 16px 12px 14px;
+    gap: 14px;
+    min-height: 0;
+  }
+
+  .brand-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 4px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .brand-logo {
+    width: 30px;
+    height: 30px;
+    border-radius: 5px;
+    background: var(--card-elev);
+    border: 1px solid rgba(45, 212, 191, 0.45);
+    color: var(--accent-main);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+
+  .brand-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink-main);
+    letter-spacing: 0.4px;
+  }
+
+  .brand-sub {
+    font-size: 11px;
+    color: var(--ink-muted);
+    margin-top: 1px;
+  }
+
+  .nav-caption {
+    font-size: 11px;
+    color: var(--ink-muted);
+    display: flex;
+    justify-content: space-between;
+    padding: 0 6px;
+  }
+
+  .task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .task-item {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 10px 10px 9px 12px;
+    text-align: left;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .task-item:hover {
+    background: rgba(23, 33, 44, 0.65);
+  }
+
+  .task-item.active {
+    background: var(--card-elev);
+    border-color: var(--line-outer);
+  }
+
+  .task-item.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 7px;
+    bottom: 7px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--accent-main);
+    box-shadow: 0 0 8px rgba(45, 212, 191, 0.55);
+  }
+
+  .task-row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+
+  .task-no {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-muted);
+  }
+
+  .task-state {
+    font-size: 10.5px;
+    font-weight: 700;
+  }
+
+  .task-state.attn { color: var(--st-wait); }
+  .task-state.done { color: var(--st-done); }
+  .task-state.idle { color: var(--ink-muted); }
+
+  .task-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink-main);
+    margin-bottom: 4px;
+  }
+
+  .task-sub {
+    font-size: 11px;
+    color: var(--ink-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .status-dots {
+    display: inline-flex;
+    gap: 4px;
+  }
+
+  .status-dots i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: block;
+  }
+
+  /* 全局小结（同普通模式位置） */
+  .global-summary {
+    border-top: 1px solid var(--line-soft);
+    padding: 12px 6px 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .summary-line {
+    font-size: 11.5px;
+    color: var(--ink-sub);
+    line-height: 1.5;
+  }
+
+  .summary-line strong {
+    color: var(--ink-main);
+    font-weight: 700;
+  }
+
+  .summary-nums {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ================= 右侧主区 ================= */
+  .main-area {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* 顶部轻量化信息区（与普通模式完全一致的 3 层结构） */
+  .top-bar {
+    padding: 13px 18px 10px;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .top-line-1 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .title-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .mission-title {
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--ink-main);
+    white-space: nowrap;
+  }
+
+  .mission-prompt {
+    font-size: 12.5px;
+    color: var(--ink-sub);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 右上角「炫酷模式」开关（当前为开启态） */
+  .mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--code-bg);
+    border: 1px solid rgba(45, 212, 191, 0.55);
+    border-radius: 99px;
+    padding: 4px 10px 4px 12px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent-main);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: box-shadow 0.15s ease;
+  }
+
+  .mode-switch:hover {
+    box-shadow: 0 0 12px rgba(45, 212, 191, 0.25);
+  }
+
+  .switch-pill {
+    width: 32px;
+    height: 17px;
+    border-radius: 99px;
+    background: rgba(45, 212, 191, 0.26);
+    border: 1px solid rgba(45, 212, 191, 0.5);
+    position: relative;
+  }
+
+  .switch-knob {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--accent-main);
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transform: translateX(15px);
+    box-shadow: 0 0 6px var(--accent-main);
+  }
+
+  /* 第 2 行：连贯的计划进度线 + Claude 说明 */
+  .top-line-2 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .progress-line {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .p-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--ink-main);
+    white-space: nowrap;
+  }
+
+  .p-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .p-step.is-run .p-dot   { background: var(--st-run); box-shadow: 0 0 7px var(--st-run); }
+  .p-step.is-wait .p-dot  { background: var(--st-wait); box-shadow: 0 0 7px var(--st-wait); }
+  .p-step.is-block .p-dot { background: var(--st-block); box-shadow: 0 0 7px var(--st-block); }
+
+  .p-state {
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .p-step.is-run .p-state   { color: var(--st-run); }
+  .p-step.is-wait .p-state  { color: #FBBF24; }
+  .p-step.is-block .p-state { color: #FB7185; }
+
+  .p-connector {
+    width: 24px;
+    height: 1px;
+    background: var(--line-outer);
+    margin: 0 9px;
+  }
+
+  .claude-brief {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--ink-sub);
+    padding-left: 12px;
+    border-left: 2px solid var(--vendor-claude);
+    min-width: 0;
+  }
+
+  .claude-brief-name {
+    color: var(--vendor-claude);
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .claude-brief-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 第 3 行：轻量提醒带 */
+  .top-alerts {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    padding: 5px 10px;
+  }
+
+  .alerts-prefix {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--ink-muted);
+    flex-shrink: 0;
+  }
+
+  .alert-link {
+    background: transparent;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 1px 6px;
+    border-radius: 3px;
+    transition: background 0.14s ease;
+  }
+
+  .alert-link.wait { color: #FCD34D; }
+  .alert-link.wait:hover { background: var(--st-wait-bg); }
+  .alert-link.block { color: #FDA4AF; }
+  .alert-link.block:hover { background: var(--st-block-bg); }
+
+  .alert-sep {
+    color: var(--line-outer);
+    font-size: 11px;
+  }
+
+  /* ================= 2×2 观测视窗监控墙（同骨架，光学舰桥感） ================= */
+  .wall-grid {
+    padding: 12px 16px 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .agent-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--line-hair);
+    border-radius: 4px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .agent-panel.v-codex  { --v-color: var(--vendor-codex); --v-soft: var(--vendor-codex-soft); }
+  .agent-panel.v-agy    { --v-color: var(--vendor-agy);   --v-soft: var(--vendor-agy-soft); }
+  .agent-panel.v-claude { --v-color: var(--vendor-claude); --v-soft: var(--vendor-claude-soft); }
+
+  /* 光学准星边角（保留方向 B 精髓） */
+  .agent-panel::before,
+  .agent-panel::after {
+    content: "";
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .agent-panel::before {
+    top: 0;
+    left: 0;
+    border-top: 2px solid var(--v-color);
+    border-left: 2px solid var(--v-color);
+  }
+
+  .agent-panel::after {
+    bottom: 0;
+    right: 0;
+    border-bottom: 2px solid var(--line-outer);
+    border-right: 2px solid var(--line-outer);
+  }
+
+  .agent-panel.focus-flash {
+    border-color: var(--st-wait);
+    box-shadow: 0 0 0 1px var(--st-wait), 0 0 20px rgba(245, 158, 11, 0.22);
+  }
+
+  /* 运行中视窗顶部微光扫描线 */
+  .scan-beam {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .scan-beam::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -35%;
+    width: 35%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, var(--st-run), transparent);
+    animation: sweepGlow 2.8s linear infinite;
+  }
+
+  @keyframes sweepGlow {
+    0% { left: -35%; }
+    100% { left: 105%; }
+  }
+
+  /* 1. 身份 + 波形 + 状态顶栏（与普通模式同构） */
+  .panel-head {
+    padding: 10px 14px 8px;
+    background: var(--card-elev);
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .who-group {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .vendor-mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    background: var(--code-bg);
+    border: 1px solid var(--v-color);
+    color: var(--v-color);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+
+  .who-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .who-name-row {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+
+  .agent-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ink-main);
+  }
+
+  .vendor-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--v-color);
+  }
+
+  .meta-row {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-muted);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .right-telemetry {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .activity-box {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .spark-svg {
+    width: 78px;
+    height: 18px;
+    display: block;
+    overflow: visible;
+  }
+
+  .last-active {
+    font-size: 10.5px;
+    color: var(--ink-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* 运行中但超过 3 分钟没动静时的温和提醒样式 */
+  .last-active.stale-warn {
+    color: var(--st-stale);
+    font-weight: 700;
+  }
+
+  .last-active.stale-warn::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--st-stale);
+    box-shadow: 0 0 6px var(--st-stale);
+  }
+
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    border-radius: 3px;
+    font-size: 11.5px;
+    font-weight: 700;
+    border: 1px solid transparent;
+  }
+
+  .status-chip.s-run {
+    background: var(--st-run-bg);
+    border-color: rgba(45, 212, 191, 0.35);
+    color: var(--st-run);
+  }
+  .status-chip.s-wait {
+    background: var(--st-wait-bg);
+    border-color: rgba(245, 158, 11, 0.4);
+    color: #FBBF24;
+  }
+  .status-chip.s-block {
+    background: var(--st-block-bg);
+    border-color: rgba(244, 63, 94, 0.45);
+    color: #FB7185;
+  }
+  .status-chip.s-done {
+    background: var(--st-done-bg);
+    border-color: rgba(74, 222, 128, 0.32);
+    color: var(--st-done);
+  }
+
+  .live-pulse {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--st-run);
+    box-shadow: 0 0 7px var(--st-run);
+    animation: coreGlow 1.7s ease-in-out infinite;
+  }
+
+  @keyframes coreGlow {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(0.7); opacity: 0.45; }
+  }
+
+  /* 2. 主角区：唯一的一行大白话进展（与普通模式一样醒目大字） */
+  .now-hero {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .now-hero::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+  }
+
+  .now-hero.h-run   { background: rgba(45, 212, 191, 0.07); }
+  .now-hero.h-run::before   { background: var(--st-run); }
+  .now-hero.h-wait  { background: rgba(245, 158, 11, 0.08); }
+  .now-hero.h-wait::before  { background: var(--st-wait); }
+  .now-hero.h-block { background: rgba(244, 63, 94, 0.09); }
+  .now-hero.h-block::before { background: var(--st-block); }
+  .now-hero.h-done  { background: rgba(74, 222, 128, 0.06); }
+  .now-hero.h-done::before  { background: var(--st-done); }
+
+  .now-k {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    flex-shrink: 0;
+  }
+
+  .h-run .now-k   { color: var(--st-run); }
+  .h-wait .now-k  { color: #FCD34D; }
+  .h-block .now-k { color: #FDA4AF; }
+  .h-done .now-k  { color: var(--st-done); }
+
+  .now-text {
+    font-size: 15px;
+    font-weight: 700;
+    color: #F4F8FC;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 3. 炫酷模式主体：真实滚动代码流视窗 */
+  .code-viewport {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    background: var(--code-bg);
+    padding: 9px 13px;
+    font-family: var(--font-mono);
+    font-size: 11.8px;
+    line-height: 1.56;
+    position: relative;
+  }
+
+  .code-viewport::-webkit-scrollbar {
+    width: 5px;
+  }
+  .code-viewport::-webkit-scrollbar-track {
+    background: var(--code-bg);
+  }
+  .code-viewport::-webkit-scrollbar-thumb {
+    background: #253445;
+    border-radius: 2px;
+  }
+  .code-viewport::-webkit-scrollbar-thumb:hover {
+    background: #364B63;
+  }
+
+  /* 运行中的代码流缓慢向上滚动感（悬停暂停方便看清细节） */
+  .code-stream.auto-scroll {
+    animation: slowTerminalScroll 22s linear infinite;
+  }
+
+  .code-viewport:hover .code-stream.auto-scroll {
+    animation-play-state: paused;
+  }
+
+  @keyframes slowTerminalScroll {
+    0%   { transform: translateY(0); }
+    12%  { transform: translateY(0); }
+    82%  { transform: translateY(-96px); }
+    92%  { transform: translateY(-96px); }
+    100% { transform: translateY(0); }
+  }
+
+  .c-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding: 0.5px 0;
+  }
+
+  .c-line.is-latest {
+    animation: codeSlideIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+  }
+
+  @keyframes codeSlideIn {
+    0% { opacity: 0; transform: translateY(7px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  .c-ts   { color: var(--code-ts); }
+  .c-cmd  { color: var(--code-cmd); font-weight: 700; }
+  .c-ok   { color: var(--code-ok); }
+  .c-add  { color: var(--code-add); background: rgba(52, 211, 153, 0.08); display: block; padding-left: 4px; border-left: 2px solid rgba(52, 211, 153, 0.45); }
+  .c-meta { color: var(--code-meta); }
+  .c-out  { color: #CBD5E1; }
+  .c-warn { color: var(--code-warn); font-weight: 700; }
+  .c-err  { color: var(--code-err); font-weight: 700; background: rgba(244, 63, 94, 0.1); display: block; padding: 1px 4px; border-left: 2px solid var(--st-block); }
+  .c-say  { color: var(--ink-main); }
+  .c-who  { color: var(--v-color); font-weight: 700; }
+  .c-user { color: #7DD3FC; background: rgba(56, 189, 248, 0.12); display: block; padding: 2px 6px; border-left: 2px solid var(--vendor-codex); margin-top: 3px; }
+
+  /* 闪烁终端光标 */
+  .blink-cursor {
+    display: inline-block;
+    width: 7px;
+    height: 13px;
+    background: var(--st-run);
+    vertical-align: -2px;
+    margin-left: 4px;
+    animation: cursorBlink 1s steps(1) infinite;
+  }
+
+  @keyframes cursorBlink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+
+  /* 4. 底部交互区（深色模式下高对比醒目） */
+  .panel-action {
+    background: var(--card-elev);
+    border-top: 1px solid var(--line-outer);
+    padding: 9px 14px 10px;
+    flex-shrink: 0;
+  }
+
+  .choice-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 7px;
+  }
+
+  .choice-btn {
+    background: #1C2735;
+    border: 1px solid rgba(245, 158, 11, 0.55);
+    border-radius: 4px;
+    padding: 6px 8px;
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--font-sans);
+    color: #FEF3C7;
+    transition: all 0.14s ease;
+  }
+
+  .choice-btn:hover {
+    background: rgba(245, 158, 11, 0.22);
+    border-color: #FBBF24;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.18);
+  }
+
+  .choice-btn.picked {
+    background: #F59E0B;
+    border-color: #FDE68A;
+    color: #0B1016;
+  }
+
+  .c-title {
+    font-size: 12px;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .c-desc {
+    font-size: 10.5px;
+    opacity: 0.85;
+    display: block;
+  }
+
+  .reply-row {
+    display: flex;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .quick-btn {
+    background: #E11D48;
+    color: #FFF1F2;
+    border: 1px solid #FB7185;
+    border-radius: 4px;
+    padding: 6px 11px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 0 12px rgba(244, 63, 94, 0.24);
+  }
+
+  .quick-btn:hover {
+    filter: brightness(1.1);
+  }
+
+  .reply-input {
+    flex: 1;
+    height: 31px;
+    background: var(--code-bg);
+    border: 1px solid var(--line-outer);
+    border-radius: 4px;
+    padding: 0 10px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    color: var(--ink-main);
+    outline: none;
+  }
+
+  .reply-input::placeholder {
+    color: var(--ink-muted);
+  }
+
+  .reply-input:focus {
+    border-color: var(--vendor-claude);
+  }
+
+  .send-btn {
+    height: 31px;
+    padding: 0 13px;
+    background: #243344;
+    color: var(--ink-main);
+    border: 1px solid #3C526B;
+    border-radius: 4px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .send-btn:hover {
+    background: #2E4258;
+    border-color: var(--ink-sub);
+  }
+</style>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- 左侧窄栏（与普通模式完全一致的骨架） -->
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7.5" height="7.5" rx="1.2"></rect>
+            <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.2"></rect>
+            <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.2"></rect>
+            <circle cx="17.2" cy="17.2" r="3.8"></circle>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-name">AI 指挥台</div>
+          <div class="brand-sub">静谧舰桥</div>
+        </div>
+      </div>
+
+      <div class="nav-caption">
+        <span>任务列表</span>
+        <span>3 项</span>
+      </div>
+
+      <div class="task-list">
+        <button class="task-item active" type="button">
+          <div class="task-row-top">
+            <span class="task-no">01</span>
+            <span class="task-state attn">2 项等你</span>
+          </div>
+          <div class="task-title">串珠配色网页</div>
+          <div class="task-sub">
+            <span>4 个助手</span>
+            <span class="status-dots" title="运行中 / 等你选择 / 被阻碍 / 完成">
+              <i style="background: var(--st-run);"></i>
+              <i style="background: var(--st-wait);"></i>
+              <i style="background: var(--st-block);"></i>
+              <i style="background: var(--st-done);"></i>
+            </span>
+          </div>
+        </button>
+
+        <button class="task-item" type="button">
+          <div class="task-row-top">
+            <span class="task-no">02</span>
+            <span class="task-state done">已完成</span>
+          </div>
+          <div class="task-title">手账贴纸自动排版</div>
+          <div class="task-sub">
+            <span>3 个助手 · 6分18秒</span>
+          </div>
+        </button>
+
+        <button class="task-item" type="button">
+          <div class="task-row-top">
+            <span class="task-no">03</span>
+            <span class="task-state idle">已归档</span>
+          </div>
+          <div class="task-title">小红书封面模板库</div>
+          <div class="task-sub">
+            <span>2 个助手 · 昨天</span>
+          </div>
+        </button>
+      </div>
+
+      <!-- 全局小结 -->
+      <div class="global-summary">
+        <div class="summary-line">
+          <strong>4 个助手</strong> · 1 个运行中 · <strong style="color: #FBBF24;">2 个等你</strong>
+        </div>
+        <div class="summary-nums">
+          <span>累计 68.5k token</span>
+          <span>1 个已完成</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右侧主区 -->
+    <main class="main-area">
+      <!-- 顶部轻量化信息区（全中文） -->
+      <header class="top-bar">
+        <div class="top-line-1">
+          <div class="title-wrap">
+            <h1 class="mission-title">串珠配色网页</h1>
+            <p class="mission-prompt" title="做一个能挑串珠配色的网页，顺便看看小红书上流行什么配色，再写几条种草文案">
+              「做一个能挑串珠配色的网页，顺便看看小红书上流行什么配色，再写几条种草文案」
+            </p>
+          </div>
+
+          <button class="mode-switch" type="button" onclick="window.location.href='normal-v2.html'" title="点击切回普通模式（normal-v2.html）">
+            <span>炫酷模式</span>
+            <span class="switch-pill"><span class="switch-knob"></span></span>
+          </button>
+        </div>
+
+        <div class="top-line-2">
+          <div class="progress-line" aria-label="计划步骤进度">
+            <span class="p-step is-run">
+              <i class="p-dot"></i>
+              <span>1. Codex 做网页</span>
+              <span class="p-state">进行中</span>
+            </span>
+            <span class="p-connector"></span>
+            <span class="p-step is-wait">
+              <i class="p-dot"></i>
+              <span>2. agy 调研配色</span>
+              <span class="p-state">等你选择</span>
+            </span>
+            <span class="p-connector"></span>
+            <span class="p-step is-block">
+              <i class="p-dot"></i>
+              <span>3. Claude 写文案</span>
+              <span class="p-state">被阻碍</span>
+            </span>
+          </div>
+
+          <div class="claude-brief">
+            <span class="claude-brief-name">Claude：</span>
+            <span class="claude-brief-text">我把需求拆成三步，三个助手同时开工，最后我来审查</span>
+          </div>
+        </div>
+
+        <div class="top-alerts">
+          <span class="alerts-prefix">待你处理</span>
+          <button class="alert-link wait" type="button" onclick="highlightPanel('panel-agy')">
+            <span>● agy·调研 等你选择</span>
+          </button>
+          <span class="alert-sep">|</span>
+          <button class="alert-link block" type="button" onclick="highlightPanel('panel-claude')">
+            <span>▲ Claude·文案 被阻碍：需要登录小红书创作者中心</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- 2×2 监控墙 -->
+      <section class="wall-grid">
+        <!-- 1. Codex·网页（运行中 · 自动缓慢滚屏代码流 + 闪烁光标） -->
+        <article class="agent-panel v-codex" id="panel-codex-web">
+          <div class="scan-beam" aria-hidden="true"></div>
+          <div class="panel-head">
+            <div class="who-group">
+              <div class="vendor-mark" title="Codex">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1">
+                  <polyline points="8 6 3 12 8 18"></polyline>
+                  <polyline points="16 6 21 12 16 18"></polyline>
+                  <line x1="13" y1="5" x2="11" y2="19"></line>
+                </svg>
+              </div>
+              <div class="who-text">
+                <div class="who-name-row">
+                  <span class="agent-name">Codex·网页</span>
+                  <span class="vendor-label">Codex</span>
+                </div>
+                <div class="meta-row">
+                  <span>3分12秒</span>
+                  <span>28.4k token</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-telemetry">
+              <div class="activity-box" title="最近 5 分钟每 15 秒动作数（从早到晚）">
+                <svg class="spark-svg" data-series="0,1,2,1,3,2,4,3,2,5,3,4,2,3,5,4,3,4,6,4" data-color="#38BDF8"></svg>
+                <span class="last-active" data-status="running" data-idle-sec="8">最后动态：8 秒前</span>
+              </div>
+              <div class="status-chip s-run">
+                <span class="live-pulse"></span>
+                <span>运行中</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="now-hero h-run">
+            <span class="now-k">正在做</span>
+            <div class="now-text">正在修改文件 beads.html，给珠子加上高光</div>
+          </div>
+
+          <div class="code-viewport" title="鼠标移入可暂停滚动">
+            <div class="code-stream auto-scroll">
+              <div class="c-line"><span class="c-ts">[14:02:18]</span> <span class="c-cmd">PS&gt; dir C:\work\beads</span></div>
+              <div class="c-line"><span class="c-meta">beads.html   beads.js   beads.test.js   palettes.json</span></div>
+              <div class="c-line"><span class="c-ts">[14:03:12]</span> <span class="c-cmd">PS&gt; node beads.test.js</span></div>
+              <div class="c-line"><span class="c-ok">✔ countBeads(15, 8) === 22</span></div>
+              <div class="c-line"><span class="c-ok">✔ countBeads(14.5, 6) === 27</span></div>
+              <div class="c-line"><span class="c-ok">✔ countBeads(16, 10) === 17</span></div>
+              <div class="c-line"><span class="c-ok">3 passing (12ms)</span>  <span class="c-meta">[exit 0]</span></div>
+              <div class="c-line"><span class="c-ts">[14:03:20]</span> <span class="c-cmd">*** edit C:\work\beads\beads.html</span></div>
+              <div class="c-line c-add">+  .bead::after {</div>
+              <div class="c-line c-add">+    content: "";</div>
+              <div class="c-line c-add">+    position: absolute; top: 18%; left: 22%;</div>
+              <div class="c-line c-add">+    width: 28%; height: 22%;</div>
+              <div class="c-line c-add">+    border-radius: 50%;</div>
+              <div class="c-line c-add">+    background: radial-gradient(circle, rgba(255,255,255,.85), transparent 70%);</div>
+              <div class="c-line c-add">+  }</div>
+              <div class="c-line"><span class="c-ts">[14:03:24]</span> <span class="c-who">codex:</span> <span class="c-say">高光加好了，正在检查 6 套配色下的效果</span></div>
+              <div class="c-line"><span class="c-ts">[14:03:31]</span> <span class="c-cmd">*** edit C:\work\beads\beads.html</span></div>
+              <div class="c-line c-add">+  .bead.jade { box-shadow: inset -3px -4px 6px rgba(14,56,42,.38); }</div>
+              <div class="c-line c-add">+  .bead.gold { box-shadow: inset -2px -3px 5px rgba(138,94,18,.42); }</div>
+              <div class="c-line is-latest"><span class="c-ts">[14:03:38]</span> <span class="c-who">codex:</span> <span class="c-say">正在核对珠子反光角度与背景对比度</span><span class="blink-cursor"></span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- 2. agy·调研（等你选择 · 真实浏览抓取流 + 醒目深色选项按钮） -->
+        <article class="agent-panel v-agy" id="panel-agy">
+          <div class="panel-head">
+            <div class="who-group">
+              <div class="vendor-mark" title="Antigravity">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3.4"></circle>
+                  <ellipse cx="12" cy="12" rx="9.5" ry="4.4" transform="rotate(-28 12 12)"></ellipse>
+                </svg>
+              </div>
+              <div class="who-text">
+                <div class="who-name-row">
+                  <span class="agent-name">agy·调研</span>
+                  <span class="vendor-label">Antigravity</span>
+                </div>
+                <div class="meta-row">
+                  <span>1分40秒</span>
+                  <span>18.7k token</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-telemetry">
+              <div class="activity-box" title="最近 5 分钟每 15 秒动作数（从早到晚）">
+                <svg class="spark-svg" data-series="1,2,3,2,1,3,2,1,0,2,1,1,0,0,0,0,0,0,0,0" data-color="#F59E0B"></svg>
+                <span class="last-active" data-status="waiting" data-idle-sec="70">最后动态：1 分 10 秒前</span>
+              </div>
+              <div class="status-chip s-wait">
+                <span>等你选择</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="now-hero h-wait">
+            <span class="now-k">等你选</span>
+            <div class="now-text" id="cAgyNow">等你做选择</div>
+          </div>
+
+          <div class="code-viewport" id="cAgyCode">
+            <div class="code-stream">
+              <div class="c-line"><span class="c-ts">[14:02:31]</span> <span class="c-cmd">&gt;&gt; open_browser_url({ "Url": "https://www.xiaohongshu.com/search_result?keyword=串珠手链配色" })</span></div>
+              <div class="c-line"><span class="c-ok">&lt;&lt; open_browser_url 完成 2.41s</span></div>
+              <div class="c-line"><span class="c-ts">[14:02:40]</span> <span class="c-cmd">&gt;&gt; read_browser_page({})</span></div>
+              <div class="c-line"><span class="c-out">&lt;&lt; 第一屏 20 条笔记：新中式 7 · 白月光 5 · 多巴胺 4 · 其他 4</span></div>
+              <div class="c-line"><span class="c-ts">[14:02:49]</span> <span class="c-meta">&gt;&gt; 归类高频色卡：翡翠+南红+古法金 / 白水晶+月光石 / 彩色琉璃+异形珍珠</span></div>
+              <div class="c-line is-latest"><span class="c-ts">[14:02:58]</span> <span class="c-who">agy:</span> <span class="c-warn">找到 3 种最火的配色风格，等你选一个主推方向</span></div>
+            </div>
+          </div>
+
+          <div class="panel-action">
+            <div class="choice-row">
+              <button class="choice-btn" type="button" onclick="pickCoolChoice(this, '1. 新中式（翡翠+南红+古法金）')">
+                <span class="c-title">1. 新中式</span>
+                <span class="c-desc">翡翠+南红+古法金</span>
+              </button>
+              <button class="choice-btn" type="button" onclick="pickCoolChoice(this, '2. 白月光（白水晶+月光石）')">
+                <span class="c-title">2. 白月光</span>
+                <span class="c-desc">白水晶+月光石</span>
+              </button>
+              <button class="choice-btn" type="button" onclick="pickCoolChoice(this, '3. 多巴胺（彩色琉璃+异形珍珠）')">
+                <span class="c-title">3. 多巴胺</span>
+                <span class="c-desc">彩色琉璃+异形珍珠</span>
+              </button>
+            </div>
+          </div>
+        </article>
+
+        <!-- 3. Claude·文案（被阻碍 · 真实请求重定向流 + 高对比回复栏） -->
+        <article class="agent-panel v-claude" id="panel-claude">
+          <div class="panel-head">
+            <div class="who-group">
+              <div class="vendor-mark" title="Claude">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"></path>
+                </svg>
+              </div>
+              <div class="who-text">
+                <div class="who-name-row">
+                  <span class="agent-name">Claude·文案</span>
+                  <span class="vendor-label">Claude</span>
+                </div>
+                <div class="meta-row">
+                  <span>52秒</span>
+                  <span>9.1k token</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-telemetry">
+              <div class="activity-box" title="最近 5 分钟每 15 秒动作数（从早到晚）">
+                <svg class="spark-svg" data-series="0,0,0,0,0,0,0,0,0,0,0,0,1,2,1,1,0,0,0,0" data-color="#F0835A"></svg>
+                <span class="last-active" data-status="blocked" data-idle-sec="112">最后动态：1 分 52 秒前</span>
+              </div>
+              <div class="status-chip s-block">
+                <span>被阻碍</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="now-hero h-block">
+            <span class="now-k">卡住了</span>
+            <div class="now-text" id="cClaudeNow">被阻碍：需要你登录小红书创作者中心</div>
+          </div>
+
+          <div class="code-viewport" id="cClaudeCode">
+            <div class="code-stream">
+              <div class="c-line"><span class="c-ts">[14:02:05]</span> <span class="c-cmd">&gt;&gt; Read C:\work\beads\beads.html</span></div>
+              <div class="c-line"><span class="c-out">&lt;&lt; 312 lines (已提取 6 套配色名称与珠径参数)</span></div>
+              <div class="c-line"><span class="c-ts">[14:02:11]</span> <span class="c-cmd">&gt;&gt; WebFetch https://creator.xiaohongshu.com/</span></div>
+              <div class="c-line"><span class="c-warn">&lt;&lt; 302 Redirect → /login</span></div>
+              <div class="c-line c-err is-latest"><span class="c-ts">[14:02:12]</span> <span class="c-who">claude:</span> 被阻碍：需要登录小红书创作者中心才能看到笔记数据</div>
+            </div>
+          </div>
+
+          <div class="panel-action">
+            <div class="reply-row">
+              <button class="quick-btn" type="button" onclick="replyCoolClaude('已在浏览器登录好，请继续')">我已登录，继续</button>
+              <input class="reply-input" id="cClaudeInput" type="text" placeholder="输入回复给 Claude·文案..." />
+              <button class="send-btn" type="button" onclick="submitCoolClaude()">发送</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- 4. Codex·测试（完成 · 真实单元测试通过输出） -->
+        <article class="agent-panel v-codex" id="panel-codex-test">
+          <div class="panel-head">
+            <div class="who-group">
+              <div class="vendor-mark" title="Codex">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1">
+                  <polyline points="8 6 3 12 8 18"></polyline>
+                  <polyline points="16 6 21 12 16 18"></polyline>
+                  <line x1="13" y1="5" x2="11" y2="19"></line>
+                </svg>
+              </div>
+              <div class="who-text">
+                <div class="who-name-row">
+                  <span class="agent-name">Codex·测试</span>
+                  <span class="vendor-label">Codex</span>
+                </div>
+                <div class="meta-row">
+                  <span>2分05秒</span>
+                  <span>12.3k token</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-telemetry">
+              <div class="activity-box" title="最近 5 分钟每 15 秒动作数（从早到晚）">
+                <svg class="spark-svg" data-series="2,3,4,3,5,2,3,1,0,0,0,0,0,0,0,0,0,0,0,0" data-color="#38BDF8"></svg>
+                <span class="last-active" data-status="done" data-idle-sec="180">最后动态：3 分钟前</span>
+              </div>
+              <div class="status-chip s-done">
+                <span>完成</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="now-hero h-done">
+            <span class="now-k">已完成</span>
+            <div class="now-text">完成</div>
+          </div>
+
+          <div class="code-viewport">
+            <div class="code-stream">
+              <div class="c-line"><span class="c-ts">[14:01:28]</span> <span class="c-cmd">*** write C:\work\beads\beads.js</span></div>
+              <div class="c-line c-add">+ export function countBeads(wristCm, beadMm) {</div>
+              <div class="c-line c-add">+   return Math.round(((wristCm + 1.5) * 10) / beadMm) + 1;</div>
+              <div class="c-line c-add">+ }</div>
+              <div class="c-line"><span class="c-ts">[14:02:14]</span> <span class="c-cmd">*** write C:\work\beads\beads.test.js</span></div>
+              <div class="c-line"><span class="c-ts">[14:02:41]</span> <span class="c-cmd">PS&gt; node beads.test.js</span></div>
+              <div class="c-line"><span class="c-ok">✔ countBeads(15, 8) === 22</span></div>
+              <div class="c-line"><span class="c-ok">✔ countBeads(14.5, 6) === 27</span></div>
+              <div class="c-line"><span class="c-ok">✔ countBeads(16, 10) === 17</span></div>
+              <div class="c-line"><span class="c-ok">3 passing (12ms)</span>  <span class="c-meta">[exit 0]</span></div>
+              <div class="c-line is-latest"><span class="c-ts">[14:03:05]</span> <span class="c-who">codex:</span> <span class="c-ok">3 个测试全部通过，任务完成</span></div>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+<script>
+  // 根据真实 20 点数组绘制最近 5 分钟活跃度小波形（深色发光细柱）
+  function renderSparklines() {
+    document.querySelectorAll('.spark-svg').forEach(svg => {
+      const vals = svg.dataset.series.split(',').map(Number);
+      const color = svg.dataset.color || '#38BDF8';
+      const w = 78, h = 18;
+      const maxVal = Math.max(6, ...vals);
+      const step = w / vals.length;
+      const ns = 'http://www.w3.org/2000/svg';
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+      const base = document.createElementNS(ns, 'line');
+      base.setAttribute('x1', 0);
+      base.setAttribute('y1', h - 0.75);
+      base.setAttribute('x2', w);
+      base.setAttribute('y2', h - 0.75);
+      base.setAttribute('stroke', '#243242');
+      base.setAttribute('stroke-width', '1');
+      svg.appendChild(base);
+
+      vals.forEach((v, i) => {
+        const rect = document.createElementNS(ns, 'rect');
+        const barH = v === 0 ? 1.5 : Math.max(3, (v / maxVal) * (h - 2));
+        rect.setAttribute('x', (i * step + 0.6).toFixed(1));
+        rect.setAttribute('y', (h - barH).toFixed(1));
+        rect.setAttribute('width', (step - 1.3).toFixed(1));
+        rect.setAttribute('height', barH.toFixed(1));
+        rect.setAttribute('rx', '1');
+        rect.setAttribute('fill', v === 0 ? '#273546' : color);
+        rect.setAttribute('opacity', v === 0 ? '0.8' : (0.48 + 0.52 * (i / vals.length)).toFixed(2));
+        svg.appendChild(rect);
+      });
+    });
+
+    // 运行中但超过 180 秒无动态时自动应用温和提醒样式
+    document.querySelectorAll('.last-active').forEach(el => {
+      if (el.dataset.status === 'running' && Number(el.dataset.idleSec) >= 180) {
+        el.classList.add('stale-warn');
+      }
+    });
+  }
+  renderSparklines();
+
+  function highlightPanel(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('focus-flash');
+    void el.offsetWidth;
+    el.classList.add('focus-flash');
+    setTimeout(() => el.classList.remove('focus-flash'), 1200);
+  }
+
+  function appendCodeUserLine(viewportId, text) {
+    const vp = document.getElementById(viewportId);
+    const stream = vp.querySelector('.code-stream');
+    const row = document.createElement('div');
+    row.className = 'c-line c-user is-latest';
+    row.textContent = '[刚刚] 你回复: ' + text;
+    stream.appendChild(row);
+    vp.scrollTop = vp.scrollHeight;
+  }
+
+  function pickCoolChoice(btn, label) {
+    document.querySelectorAll('#panel-agy .choice-btn').forEach(b => b.classList.remove('picked'));
+    btn.classList.add('picked');
+    document.getElementById('cAgyNow').textContent = '已选择：' + label;
+    appendCodeUserLine('cAgyCode', label);
+  }
+
+  function replyCoolClaude(msg) {
+    if (!msg.trim()) return;
+    document.getElementById('cClaudeNow').textContent = '已收到回复，准备恢复读取笔记数据';
+    appendCodeUserLine('cClaudeCode', msg);
+  }
+
+  function submitCoolClaude() {
+    const inp = document.getElementById('cClaudeInput');
+    if (!inp.value.trim()) return;
+    replyCoolClaude(inp.value.trim());
+    inp.value = '';
+  }
+
+  document.getElementById('cClaudeInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitCoolClaude();
+  });
+</script>
+</body>
+</html>

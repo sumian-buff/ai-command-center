@@ -1,0 +1,24 @@
+{
+  "name": "ai-console",
+  "version": "0.2.0",
+  "description": "AI指挥台：让 Claude 当总指挥，调度 Codex / Antigravity / Claude 助手，并在本机桌面窗口里用大白话实时显示它们在做什么",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sumian-buff/ai-command-center.git"
+  },
+  "main": "app/main.js",
+  "scripts": {
+    "start": "electron .",
+    "shortcut": "node scripts/create-shortcut.mjs",
+    "ensure": "node dispatch.mjs ensure",
+    "status": "node dispatch.mjs status"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1"
+  }
+}

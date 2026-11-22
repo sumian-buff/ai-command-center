@@ -1,0 +1,1456 @@
+<!--
+  设计思路 · 普通模式 v2（暖纸手作工坊 · 焕新清爽版）
+  1. 以方向 A 为基底，针对第一轮“框太多像表格、米黄偏灰、顶部略挤”的反馈做了大幅减法：去掉所有记录行前的小标签框和多层嵌套边框，改用清爽透亮的暖白纸底、自然留白与极细微的色彩符号来分层，并加入温暖有记忆点的朱柿橙作为视觉点睛。
+  2. 顶部信息区收束为极轻的三层结构：标题与需求原话一行、三步计划做成一条连贯的进度线并衔接 Claude 总控说明、待办提醒仅在需要处理时轻柔浮现，把最大篇幅让给 2×2 监控墙。
+  3. 画面内放大了“现在正在做什么”作为绝对主角，新增最近 5 分钟真实活跃度小波形、最后动态时长、最新记录一次滑入动画与左下角安静的全局小结；三家助手（Codex / Antigravity / Claude）使用各自固定的图形标志与克制色系贯通标题、波形和记录符号，长时间盯看既清爽不累又能一眼分清谁在干什么。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI指挥台 · 普通模式（v2）</title>
+<style>
+  :root {
+    /* 清透暖白纸基调（摆脱灰扑扑，保留柔和不刺眼） */
+    --stage-bg: #EAE6DD;
+    --canvas-bg: #FAF8F4;
+    --sidebar-bg: #F3EFE7;
+    --card-bg: #FFFFFF;
+    --card-soft: #F7F5F0;
+    --card-hover: #F2EFE8;
+
+    --ink-main: #221F1D;
+    --ink-sub: #5E5852;
+    --ink-muted: #938C84;
+
+    --line-outer: #DCD5C8;
+    --line-soft: #EAE4D9;
+    --line-hair: #EFEBE2;
+
+    /* 有记忆点的品牌强调色：朱柿暖橙 */
+    --accent-main: #D65A31;
+    --accent-soft: #FDF0EB;
+
+    /* 三家助手固定品牌色（贯通标志、标题、波形、记录符号） */
+    --vendor-codex: #1C727E;
+    --vendor-codex-soft: #EAF5F7;
+    --vendor-agy: #C96B27;
+    --vendor-agy-soft: #FCF1E8;
+    --vendor-claude: #3B7A57;
+    --vendor-claude-soft: #EBF5EF;
+
+    /* 状态语义色 */
+    --st-run: #168A65;
+    --st-run-bg: #E8F6F0;
+    --st-wait: #C2740A;
+    --st-wait-bg: #FDF4E3;
+    --st-block: #C83E37;
+    --st-block-bg: #FDECEB;
+    --st-done: #4E7A59;
+    --st-done-bg: #EEF5F0;
+    --st-stale: #B86D14;
+
+    --font-sans: "Microsoft YaHei UI", "Microsoft YaHei", "DengXian", sans-serif;
+    --font-mono: "Cascadia Mono", "Consolas", "Segoe UI", monospace;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--stage-bg);
+    font-family: var(--font-sans);
+    color: var(--ink-main);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 1280 x 820 主窗口（与炫酷模式完全同骨架） */
+  .app-shell {
+    width: 1280px;
+    height: 820px;
+    max-width: 100vw;
+    max-height: 100vh;
+    background: var(--canvas-bg);
+    border: 1px solid var(--line-outer);
+    box-shadow: 0 18px 48px rgba(45, 38, 28, 0.12);
+    display: grid;
+    grid-template-columns: 196px 1fr;
+    overflow: hidden;
+  }
+
+  /* ================= 左侧窄栏（去图例，留白+全局小结） ================= */
+  .sidebar {
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--line-soft);
+    display: flex;
+    flex-direction: column;
+    padding: 16px 12px 14px;
+    gap: 14px;
+    min-height: 0;
+  }
+
+  .brand-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 4px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .brand-logo {
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    background: var(--accent-main);
+    color: #FFFFFF;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+
+  .brand-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink-main);
+    letter-spacing: 0.4px;
+  }
+
+  .brand-sub {
+    font-size: 11px;
+    color: var(--ink-muted);
+    margin-top: 1px;
+  }
+
+  .nav-caption {
+    font-size: 11px;
+    color: var(--ink-muted);
+    display: flex;
+    justify-content: space-between;
+    padding: 0 6px;
+  }
+
+  .task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .task-item {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 10px 9px 12px;
+    text-align: left;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.15s ease;
+  }
+
+  .task-item:hover {
+    background: rgba(255, 255, 255, 0.55);
+  }
+
+  .task-item.active {
+    background: var(--card-bg);
+    box-shadow: 0 1px 4px rgba(34, 31, 29, 0.06);
+  }
+
+  .task-item.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--accent-main);
+  }
+
+  .task-row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+
+  .task-no {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-muted);
+  }
+
+  .task-state {
+    font-size: 10.5px;
+    font-weight: 700;
+  }
+
+  .task-state.attn { color: var(--accent-main); }
+  .task-state.done { color: var(--st-done); }
+  .task-state.idle { color: var(--ink-muted); }
+
+  .task-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink-main);
+    margin-bottom: 4px;
+  }
+
+  .task-sub {
+    font-size: 11px;
+    color: var(--ink-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .status-dots {
+    display: inline-flex;
+    gap: 4px;
+  }
+
+  .status-dots i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: block;
+  }
+
+  /* 全局小结（安静待在左下角，随时可见） */
+  .global-summary {
+    border-top: 1px solid var(--line-soft);
+    padding: 12px 6px 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .summary-line {
+    font-size: 11.5px;
+    color: var(--ink-sub);
+    line-height: 1.5;
+  }
+
+  .summary-line strong {
+    color: var(--ink-main);
+    font-weight: 700;
+  }
+
+  .summary-nums {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ================= 右侧工作区 ================= */
+  .main-area {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* 顶部信息区（轻量化、去嵌套框，2～3 行干净展开） */
+  .top-bar {
+    padding: 13px 18px 10px;
+    background: var(--canvas-bg);
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .top-line-1 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .title-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .mission-title {
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--ink-main);
+    white-space: nowrap;
+  }
+
+  .mission-prompt {
+    font-size: 12.5px;
+    color: var(--ink-sub);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 右上角「炫酷模式」开关 */
+  .mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--card-bg);
+    border: 1px solid var(--line-outer);
+    border-radius: 99px;
+    padding: 4px 10px 4px 12px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ink-sub);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .mode-switch:hover {
+    border-color: var(--accent-main);
+    color: var(--ink-main);
+  }
+
+  .switch-pill {
+    width: 32px;
+    height: 17px;
+    border-radius: 99px;
+    background: #DDD7CB;
+    position: relative;
+    transition: background 0.2s ease;
+  }
+
+  .switch-knob {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+    transition: transform 0.2s ease;
+  }
+
+  /* 第 2 行：连贯的计划进度线 + Claude 最新说明（零多余边框） */
+  .top-line-2 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .progress-line {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-shrink: 0;
+  }
+
+  .p-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--ink-main);
+    white-space: nowrap;
+  }
+
+  .p-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .p-step.is-run .p-dot   { background: var(--st-run); box-shadow: 0 0 0 3px var(--st-run-bg); }
+  .p-step.is-wait .p-dot  { background: var(--st-wait); box-shadow: 0 0 0 3px var(--st-wait-bg); }
+  .p-step.is-block .p-dot { background: var(--st-block); box-shadow: 0 0 0 3px var(--st-block-bg); }
+
+  .p-state {
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .p-step.is-run .p-state   { color: var(--st-run); }
+  .p-step.is-wait .p-state  { color: var(--st-wait); }
+  .p-step.is-block .p-state { color: var(--st-block); }
+
+  .p-connector {
+    width: 24px;
+    height: 1.5px;
+    background: var(--line-outer);
+    margin: 0 9px;
+  }
+
+  .claude-brief {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--ink-sub);
+    padding-left: 12px;
+    border-left: 2px solid var(--vendor-claude);
+    min-width: 0;
+  }
+
+  .claude-brief-name {
+    color: var(--vendor-claude);
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .claude-brief-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 第 3 行：仅在有事时出现的轻量提醒条 */
+  .top-alerts {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #F6EFE6;
+    border-radius: 5px;
+    padding: 5px 10px;
+  }
+
+  .alerts-prefix {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--ink-sub);
+    flex-shrink: 0;
+  }
+
+  .alert-link {
+    background: transparent;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 1px 6px;
+    border-radius: 4px;
+    transition: background 0.14s ease;
+  }
+
+  .alert-link.wait { color: var(--st-wait); }
+  .alert-link.wait:hover { background: var(--st-wait-bg); }
+  .alert-link.block { color: var(--st-block); }
+  .alert-link.block:hover { background: var(--st-block-bg); }
+
+  .alert-sep {
+    color: var(--line-outer);
+    font-size: 11px;
+  }
+
+  /* ================= 2×2 监控墙（固定等大，极简留白） ================= */
+  .wall-grid {
+    padding: 12px 16px 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .agent-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+
+  /* 顶部 3px 助手品牌识别细线（鲜明而克制） */
+  .agent-panel.v-codex  { --v-color: var(--vendor-codex); --v-soft: var(--vendor-codex-soft); }
+  .agent-panel.v-agy    { --v-color: var(--vendor-agy);   --v-soft: var(--vendor-agy-soft); }
+  .agent-panel.v-claude { --v-color: var(--vendor-claude); --v-soft: var(--vendor-claude-soft); }
+
+  .agent-panel::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--v-color);
+  }
+
+  .agent-panel.focus-flash {
+    border-color: var(--accent-main);
+    box-shadow: 0 0 0 3px rgba(214, 90, 49, 0.18);
+  }
+
+  /* 1. 身份 + 波形 + 状态顶栏 */
+  .panel-head {
+    padding: 11px 14px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .who-group {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .vendor-mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: var(--v-soft);
+    color: var(--v-color);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+
+  .who-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .who-name-row {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+
+  .agent-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ink-main);
+  }
+
+  .vendor-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--v-color);
+  }
+
+  .meta-row {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-muted);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .right-telemetry {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  /* 最近 5 分钟活跃度小波形 + 最后动态时间 */
+  .activity-box {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .spark-svg {
+    width: 78px;
+    height: 18px;
+    display: block;
+    overflow: visible;
+  }
+
+  .last-active {
+    font-size: 10.5px;
+    color: var(--ink-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* 运行中但超过 3 分钟没动静时的温和提醒样式 */
+  .last-active.stale-warn {
+    color: var(--st-stale);
+    font-weight: 700;
+  }
+
+  .last-active.stale-warn::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--st-stale);
+  }
+
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    border-radius: 99px;
+    font-size: 11.5px;
+    font-weight: 700;
+  }
+
+  .status-chip.s-run   { background: var(--st-run-bg); color: var(--st-run); }
+  .status-chip.s-wait  { background: var(--st-wait-bg); color: var(--st-wait); }
+  .status-chip.s-block { background: var(--st-block-bg); color: var(--st-block); }
+  .status-chip.s-done  { background: var(--st-done-bg); color: var(--st-done); }
+
+  .live-pulse {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--st-run);
+    position: relative;
+  }
+
+  .live-pulse::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid var(--st-run);
+    animation: softRing 2s ease-out infinite;
+  }
+
+  @keyframes softRing {
+    0% { transform: scale(0.7); opacity: 0.9; }
+    100% { transform: scale(1.75); opacity: 0; }
+  }
+
+  /* 2. 主角区：「现在正在做什么」放大、醒目、不套冗余边框 */
+  .now-hero {
+    margin: 0 14px 6px;
+    padding: 9px 12px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .now-hero::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+  }
+
+  .now-hero.h-run   { background: #EEF8F4; }
+  .now-hero.h-run::before   { background: var(--st-run); }
+  .now-hero.h-wait  { background: #FEF6E6; }
+  .now-hero.h-wait::before  { background: var(--st-wait); }
+  .now-hero.h-block { background: #FEEFED; }
+  .now-hero.h-block::before { background: var(--st-block); }
+  .now-hero.h-done  { background: #F1F6F2; }
+  .now-hero.h-done::before  { background: var(--st-done); }
+
+  .now-k {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    flex-shrink: 0;
+  }
+
+  .h-run .now-k   { color: var(--st-run); }
+  .h-wait .now-k  { color: var(--st-wait); }
+  .h-block .now-k { color: var(--st-block); }
+  .h-done .now-k  { color: var(--st-done); }
+
+  .now-text {
+    font-size: 15.5px;
+    font-weight: 700;
+    color: var(--ink-main);
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 3. 动态记录区（彻底去掉行前小标签框，用极轻符号与色阶区分） */
+  .feed-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 14px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .feed-body::-webkit-scrollbar {
+    width: 5px;
+  }
+  .feed-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .feed-body::-webkit-scrollbar-thumb {
+    background: #DDD7CB;
+    border-radius: 3px;
+  }
+  .feed-body::-webkit-scrollbar-thumb:hover {
+    background: #BFB7A8;
+  }
+
+  .entry {
+    display: grid;
+    grid-template-columns: 38px 12px 1fr;
+    gap: 8px;
+    align-items: baseline;
+    padding: 3.5px 6px;
+    border-radius: 5px;
+    font-size: 12.5px;
+    line-height: 1.48;
+  }
+
+  /* 最新一行记录轻微滑入动画（演示一次） */
+  .entry.is-latest {
+    animation: latestSlideIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+  }
+
+  @keyframes latestSlideIn {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  .e-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-muted);
+  }
+
+  .e-sym {
+    font-size: 11px;
+    text-align: center;
+    line-height: 1;
+    color: var(--v-color);
+  }
+
+  /* 普通动作：轻盈退后 */
+  .entry.k-act .e-msg {
+    color: var(--ink-sub);
+  }
+
+  /* 助手说的话：柔和底色 + 品牌色竖线稍微突出 */
+  .entry.k-say {
+    background: var(--card-soft);
+    border-left: 2.5px solid var(--v-color);
+    padding: 5px 8px;
+  }
+  .entry.k-say .e-msg {
+    color: var(--ink-main);
+    font-weight: 700;
+  }
+
+  /* 你的回复：朱柿暖橙轻强调 */
+  .entry.k-user {
+    background: var(--accent-soft);
+    border-left: 2.5px solid var(--accent-main);
+    padding: 5px 8px;
+  }
+  .entry.k-user .e-sym {
+    color: var(--accent-main);
+    font-weight: 700;
+  }
+  .entry.k-user .e-msg {
+    color: var(--ink-main);
+    font-weight: 700;
+  }
+
+  /* 提醒 / 阻碍：适度突出 */
+  .entry.k-alert {
+    background: var(--st-block-bg);
+    border-left: 2.5px solid var(--st-block);
+    padding: 5px 8px;
+  }
+  .entry.k-alert .e-sym {
+    color: var(--st-block);
+    font-weight: 700;
+  }
+  .entry.k-alert .e-msg {
+    color: #9E2721;
+    font-weight: 700;
+  }
+
+  .entry.k-alert.warn {
+    background: var(--st-wait-bg);
+    border-left-color: var(--st-wait);
+  }
+  .entry.k-alert.warn .e-sym { color: var(--st-wait); }
+  .entry.k-alert.warn .e-msg { color: #945605; }
+
+  /* 4. 底部交互区（无生硬嵌套，浅暖色底柔和区隔） */
+  .panel-action {
+    background: var(--card-soft);
+    border-top: 1px solid var(--line-hair);
+    padding: 9px 14px 10px;
+    flex-shrink: 0;
+  }
+
+  .choice-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 7px;
+  }
+
+  .choice-btn {
+    background: var(--card-bg);
+    border: 1px solid #DFD4C0;
+    border-radius: 6px;
+    padding: 6px 8px;
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--font-sans);
+    transition: all 0.14s ease;
+  }
+
+  .choice-btn:hover {
+    border-color: var(--st-wait);
+    background: #FFFBF2;
+  }
+
+  .choice-btn.picked {
+    background: var(--accent-main);
+    border-color: var(--accent-main);
+    color: #FFFFFF;
+  }
+
+  .c-title {
+    font-size: 12px;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .c-desc {
+    font-size: 10.5px;
+    opacity: 0.78;
+    display: block;
+  }
+
+  .reply-row {
+    display: flex;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .quick-btn {
+    background: var(--st-block);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 11px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .quick-btn:hover {
+    filter: brightness(1.06);
+  }
+
+  .reply-input {
+    flex: 1;
+    height: 31px;
+    background: var(--card-bg);
+    border: 1px solid var(--line-outer);
+    border-radius: 6px;
+    padding: 0 10px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    color: var(--ink-main);
+    outline: none;
+  }
+
+  .reply-input:focus {
+    border-color: var(--accent-main);
+  }
+
+  .send-btn {
+    height: 31px;
+    padding: 0 13px;
+    background: var(--ink-main);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .send-btn:hover {
+    background: #3B3632;
+  }
+</style>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- 左侧窄栏 -->
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <rect x="3" y="3" width="7.5" height="7.5" rx="1.5"></rect>
+            <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"></rect>
+            <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"></rect>
+            <circle cx="17.2" cy="17.2" r="3.8"></circle>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-name">AI 指挥台</div>
+          <div class="brand-sub">暖纸工作台</div>
+        </div>
+      </div>
+
+      <div class="nav-caption">
+        <span>任务列表</span>
+        <span>3 项</span>
+      </div>
+
+      <div class="task-list">
+        <button class="task-item active" type="button">
+          <div class="task-row-top">
+            <span class="task-no">01</span>
+            <span class="task-state attn">2 项等你</span>
+          </div>
+          <div class="task-title">串珠配色网页</div>
+          <div class="task-sub">
+            <span>4 个助手</span>
+            <span class="status-dots" title="运行中 / 等你选择 / 被阻碍 / 完成">
+              <i style="background: var(--st-run);"></i>
+              <i style="background: var(--st-wait);"></i>
+              <i style="background: var(--st-block);"></i>
+              <i style="background: var(--st-done);"></i>
+            </span>
+          </div>
+        </button>
+
+        <button class="task-item" type="button">
+          <div class="task-row-top">
+            <span class="task-no">02</span>
+            <span class="task-state done">已完成</span>
+          </div>
+          <div class="task-title">手账贴纸自动排版</div>
+          <div class="task-sub">
+            <span>3 个助手 · 6分18秒</span>
+          </div>
+        </button>
+
+        <button class="task-item" type="button">
+          <div class="task-row-top">
+            <span class="task-no">03</span>
+            <span class="task-state idle">已归档</span>
+          </div>
+          <div class="task-title">小红书封面模板库</div>
+          <div class="task-sub">
+            <span>2 个助手 · 昨天</span>
+          </div>
+        </button>
+      </div>
+
+      <!-- 全局小结（替代旧版助手印记图例） -->
+      <div class="global-summary">
+        <div class="summary-line">
+          <strong>4 个助手</strong> · 1 个运行中 · <strong style="color: var(--accent-main);">2 个等你</strong>
+        </div>
+        <div class="summary-nums">
+          <span>累计 68.5k token</span>
+          <span>1 个已完成</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右侧主区 -->
+    <main class="main-area">
+      <!-- 顶部轻量化信息区 -->
+      <header class="top-bar">
+        <div class="top-line-1">
+          <div class="title-wrap">
+            <h1 class="mission-title">串珠配色网页</h1>
+            <p class="mission-prompt" title="做一个能挑串珠配色的网页，顺便看看小红书上流行什么配色，再写几条种草文案">
+              「做一个能挑串珠配色的网页，顺便看看小红书上流行什么配色，再写几条种草文案」
+            </p>
+          </div>
+
+          <button class="mode-switch" type="button" onclick="window.location.href='cool-v2.html'" title="点击预览炫酷模式（cool-v2.html）">
+            <span>炫酷模式</span>
+            <span class="switch-pill"><span class="switch-knob"></span></span>
+          </button>
+        </div>
+
+        <div class="top-line-2">
+          <div class="progress-line" aria-label="计划步骤进度">
+            <span class="p-step is-run">
+              <i class="p-dot"></i>
+              <span>1. Codex 做网页</span>
+              <span class="p-state">进行中</span>
+            </span>
+            <span class="p-connector"></span>
+            <span class="p-step is-wait">
+              <i class="p-dot"></i>
+              <span>2. agy 调研配色</span>
+              <span class="p-state">等你选择</span>
+            </span>
+            <span class="p-connector"></span>
+            <span class="p-step is-block">
+              <i class="p-dot"></i>
+              <span>3. Claude 写文案</span>
+              <span class="p-state">被阻碍</span>
+            </span>
+          </div>
+
+          <div class="claude-brief">
+            <span class="claude-brief-name">Claude：</span>
+            <span class="claude-brief-text">我把需求拆成三步，三个助手同时开工，最后我来审查</span>
+          </div>
+        </div>
+
+        <div class="top-alerts">
+          <span class="alerts-prefix">待你处理</span>
+          <button class="alert-link wait" type="button" onclick="highlightPanel('panel-agy')">
+            <span>● agy·调研 等你选择</span>
+          </button>
+          <span class="alert-sep">|</span>
+          <button class="alert-link block" type="button" onclick="highlightPanel('panel-claude')">
+            <span>▲ Claude·文案 被阻碍：需要登录小红书创作者中心</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- 2×2 监控墙 -->
+      <section class="wall-grid">
+        <!-- 1. Codex·网页（运行中） -->
+        <article class="agent-panel v-codex" id="panel-codex-web">
+          <div class="panel-head">
+            <div class="who-group">
+              <div class="vendor-mark" title="Codex">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <polyline points="8 6 3 12 8 18"></polyline>
+                  <polyline points="16 6 21 12 16 18"></polyline>
+                  <line x1="13" y1="5" x2="11" y2="19"></line>
+                </svg>
+              </div>
+              <div class="who-text">
+                <div class="who-name-row">
+                  <span class="agent-name">Codex·网页</span>
+                  <span class="vendor-label">Codex</span>
+                </div>
+                <div class="meta-row">
+                  <span>3分12秒</span>
+                  <span>28.4k token</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-telemetry">
+              <div class="activity-box" title="最近 5 分钟每 15 秒动作数（从早到晚）">
+                <svg class="spark-svg" data-series="0,1,2,1,3,2,4,3,2,5,3,4,2,3,5,4,3,4,6,4" data-color="#1C727E"></svg>
+                <span class="last-active" data-status="running" data-idle-sec="8">最后动态：8 秒前</span>
+              </div>
+              <div class="status-chip s-run">
+                <span class="live-pulse"></span>
+                <span>运行中</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="now-hero h-run">
+            <span class="now-k">正在做</span>
+            <div class="now-text">正在修改文件 beads.html，给珠子加上高光</div>
+          </div>
+
+          <div class="feed-body">
+            <div class="entry k-act">
+              <span class="e-time">14:01</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">接到任务：做串珠配色预览网页</span>
+            </div>
+            <div class="entry k-say">
+              <span class="e-time">14:01</span>
+              <span class="e-sym">“</span>
+              <span class="e-msg">「我先看一下文件夹，再写网页和测试」</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">浏览文件夹</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">新建了文件：beads.html</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:03</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">运行测试</span>
+            </div>
+            <div class="entry k-say">
+              <span class="e-time">14:03</span>
+              <span class="e-sym">“</span>
+              <span class="e-msg">「6 套配色都能切换了，接下来加高光」</span>
+            </div>
+            <div class="entry k-act is-latest">
+              <span class="e-time">14:04</span>
+              <span class="e-sym">●</span>
+              <span class="e-msg">修改文件：beads.html</span>
+            </div>
+          </div>
+        </article>
+
+        <!-- 2. agy·调研（等你选择） -->
+        <article class="agent-panel v-agy" id="panel-agy">
+          <div class="panel-head">
+            <div class="who-group">
+              <div class="vendor-mark" title="Antigravity">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1">
+                  <circle cx="12" cy="12" r="3.4"></circle>
+                  <ellipse cx="12" cy="12" rx="9.5" ry="4.4" transform="rotate(-28 12 12)"></ellipse>
+                </svg>
+              </div>
+              <div class="who-text">
+                <div class="who-name-row">
+                  <span class="agent-name">agy·调研</span>
+                  <span class="vendor-label">Antigravity</span>
+                </div>
+                <div class="meta-row">
+                  <span>1分40秒</span>
+                  <span>18.7k token</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-telemetry">
+              <div class="activity-box" title="最近 5 分钟每 15 秒动作数（从早到晚）">
+                <svg class="spark-svg" data-series="1,2,3,2,1,3,2,1,0,2,1,1,0,0,0,0,0,0,0,0" data-color="#C96B27"></svg>
+                <span class="last-active" data-status="waiting" data-idle-sec="70">最后动态：1 分 10 秒前</span>
+              </div>
+              <div class="status-chip s-wait">
+                <span>等你选择</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="now-hero h-wait">
+            <span class="now-k">等你选</span>
+            <div class="now-text" id="nAgyNow">等你做选择</div>
+          </div>
+
+          <div class="feed-body" id="nAgyFeed">
+            <div class="entry k-act">
+              <span class="e-time">14:01</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">接到任务：调研小红书流行配色</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:01</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">在浏览器打开网页：小红书</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">网上搜索：串珠手链 配色</span>
+            </div>
+            <div class="entry k-say">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">“</span>
+              <span class="e-msg">「找到 3 种最火的配色风格」</span>
+            </div>
+            <div class="entry k-alert warn is-latest">
+              <span class="e-time">14:03</span>
+              <span class="e-sym">●</span>
+              <span class="e-msg">等你做选择</span>
+            </div>
+          </div>
+
+          <div class="panel-action">
+            <div class="choice-row">
+              <button class="choice-btn" type="button" onclick="pickNormalChoice(this, '1. 新中式（翡翠+南红+古法金）')">
+                <span class="c-title">1. 新中式</span>
+                <span class="c-desc">翡翠+南红+古法金</span>
+              </button>
+              <button class="choice-btn" type="button" onclick="pickNormalChoice(this, '2. 白月光（白水晶+月光石）')">
+                <span class="c-title">2. 白月光</span>
+                <span class="c-desc">白水晶+月光石</span>
+              </button>
+              <button class="choice-btn" type="button" onclick="pickNormalChoice(this, '3. 多巴胺（彩色琉璃+异形珍珠）')">
+                <span class="c-title">3. 多巴胺</span>
+                <span class="c-desc">彩色琉璃+异形珍珠</span>
+              </button>
+            </div>
+          </div>
+        </article>
+
+        <!-- 3. Claude·文案（被阻碍） -->
+        <article class="agent-panel v-claude" id="panel-claude">
+          <div class="panel-head">
+            <div class="who-group">
+              <div class="vendor-mark" title="Claude">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1">
+                  <path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"></path>
+                </svg>
+              </div>
+              <div class="who-text">
+                <div class="who-name-row">
+                  <span class="agent-name">Claude·文案</span>
+                  <span class="vendor-label">Claude</span>
+                </div>
+                <div class="meta-row">
+                  <span>52秒</span>
+                  <span>9.1k token</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-telemetry">
+              <div class="activity-box" title="最近 5 分钟每 15 秒动作数（从早到晚）">
+                <svg class="spark-svg" data-series="0,0,0,0,0,0,0,0,0,0,0,0,1,2,1,1,0,0,0,0" data-color="#3B7A57"></svg>
+                <span class="last-active" data-status="blocked" data-idle-sec="112">最后动态：1 分 52 秒前</span>
+              </div>
+              <div class="status-chip s-block">
+                <span>被阻碍</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="now-hero h-block">
+            <span class="now-k">卡住了</span>
+            <div class="now-text" id="nClaudeNow">被阻碍：需要你登录小红书创作者中心</div>
+          </div>
+
+          <div class="feed-body" id="nClaudeFeed">
+            <div class="entry k-act">
+              <span class="e-time">14:01</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">接到任务：写 3 条种草文案</span>
+            </div>
+            <div class="entry k-say">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">“</span>
+              <span class="e-msg">「我先看看网页的效果」</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">查看文件：beads.html</span>
+            </div>
+            <div class="entry k-alert is-latest">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">▲</span>
+              <span class="e-msg">被阻碍：需要登录小红书创作者中心才能看到笔记数据</span>
+            </div>
+          </div>
+
+          <div class="panel-action">
+            <div class="reply-row">
+              <button class="quick-btn" type="button" onclick="replyNormalClaude('已在浏览器登录好，请继续')">我已登录，继续</button>
+              <input class="reply-input" id="nClaudeInput" type="text" placeholder="或直接回复给 Claude·文案..." />
+              <button class="send-btn" type="button" onclick="submitNormalClaude()">发送</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- 4. Codex·测试（完成） -->
+        <article class="agent-panel v-codex" id="panel-codex-test">
+          <div class="panel-head">
+            <div class="who-group">
+              <div class="vendor-mark" title="Codex">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <polyline points="8 6 3 12 8 18"></polyline>
+                  <polyline points="16 6 21 12 16 18"></polyline>
+                  <line x1="13" y1="5" x2="11" y2="19"></line>
+                </svg>
+              </div>
+              <div class="who-text">
+                <div class="who-name-row">
+                  <span class="agent-name">Codex·测试</span>
+                  <span class="vendor-label">Codex</span>
+                </div>
+                <div class="meta-row">
+                  <span>2分05秒</span>
+                  <span>12.3k token</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-telemetry">
+              <div class="activity-box" title="最近 5 分钟每 15 秒动作数（从早到晚）">
+                <svg class="spark-svg" data-series="2,3,4,3,5,2,3,1,0,0,0,0,0,0,0,0,0,0,0,0" data-color="#1C727E"></svg>
+                <span class="last-active" data-status="done" data-idle-sec="180">最后动态：3 分钟前</span>
+              </div>
+              <div class="status-chip s-done">
+                <span>完成</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="now-hero h-done">
+            <span class="now-k">已完成</span>
+            <div class="now-text">完成</div>
+          </div>
+
+          <div class="feed-body">
+            <div class="entry k-act">
+              <span class="e-time">14:01</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">接到任务：写颗数计算函数</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:01</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">新建了文件：beads.js</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">新建了文件：beads.test.js</span>
+            </div>
+            <div class="entry k-act">
+              <span class="e-time">14:02</span>
+              <span class="e-sym">·</span>
+              <span class="e-msg">运行测试</span>
+            </div>
+            <div class="entry k-say">
+              <span class="e-time">14:03</span>
+              <span class="e-sym">“</span>
+              <span class="e-msg">「3 个测试全部通过」</span>
+            </div>
+            <div class="entry k-act is-latest">
+              <span class="e-time">14:03</span>
+              <span class="e-sym">✓</span>
+              <span class="e-msg">完成</span>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+<script>
+  // 根据真实 20 点数组绘制最近 5 分钟活跃度小波形（柱状+轻底基线）
+  function renderSparklines() {
+    document.querySelectorAll('.spark-svg').forEach(svg => {
+      const vals = svg.dataset.series.split(',').map(Number);
+      const color = svg.dataset.color || '#1C727E';
+      const w = 78, h = 18;
+      const maxVal = Math.max(6, ...vals);
+      const step = w / vals.length;
+      const ns = 'http://www.w3.org/2000/svg';
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+      const base = document.createElementNS(ns, 'line');
+      base.setAttribute('x1', 0);
+      base.setAttribute('y1', h - 0.75);
+      base.setAttribute('x2', w);
+      base.setAttribute('y2', h - 0.75);
+      base.setAttribute('stroke', '#E5DFD3');
+      base.setAttribute('stroke-width', '1');
+      svg.appendChild(base);
+
+      vals.forEach((v, i) => {
+        const rect = document.createElementNS(ns, 'rect');
+        const barH = v === 0 ? 1.5 : Math.max(3, (v / maxVal) * (h - 2));
+        rect.setAttribute('x', (i * step + 0.6).toFixed(1));
+        rect.setAttribute('y', (h - barH).toFixed(1));
+        rect.setAttribute('width', (step - 1.3).toFixed(1));
+        rect.setAttribute('height', barH.toFixed(1));
+        rect.setAttribute('rx', '1');
+        rect.setAttribute('fill', v === 0 ? '#DDD6C8' : color);
+        rect.setAttribute('opacity', v === 0 ? '0.65' : (0.52 + 0.48 * (i / vals.length)).toFixed(2));
+        svg.appendChild(rect);
+      });
+    });
+
+    // 运行中但超过 180 秒无动态时自动应用温和提醒样式
+    document.querySelectorAll('.last-active').forEach(el => {
+      if (el.dataset.status === 'running' && Number(el.dataset.idleSec) >= 180) {
+        el.classList.add('stale-warn');
+      }
+    });
+  }
+  renderSparklines();
+
+  function highlightPanel(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('focus-flash');
+    void el.offsetWidth;
+    el.classList.add('focus-flash');
+    setTimeout(() => el.classList.remove('focus-flash'), 1200);
+  }
+
+  function appendUserEntry(feedId, text) {
+    const feed = document.getElementById(feedId);
+    const row = document.createElement('div');
+    row.className = 'entry k-user is-latest';
+    row.innerHTML = '<span class="e-time">刚刚</span><span class="e-sym">→</span><span class="e-msg"></span>';
+    row.querySelector('.e-msg').textContent = '你回复：' + text;
+    feed.appendChild(row);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function pickNormalChoice(btn, label) {
+    document.querySelectorAll('#panel-agy .choice-btn').forEach(b => b.classList.remove('picked'));
+    btn.classList.add('picked');
+    document.getElementById('nAgyNow').textContent = '已选择：' + label;
+    appendUserEntry('nAgyFeed', label);
+  }
+
+  function replyNormalClaude(msg) {
+    if (!msg.trim()) return;
+    document.getElementById('nClaudeNow').textContent = '已收到回复，准备继续抓取笔记数据';
+    appendUserEntry('nClaudeFeed', msg);
+  }
+
+  function submitNormalClaude() {
+    const inp = document.getElementById('nClaudeInput');
+    if (!inp.value.trim()) return;
+    replyNormalClaude(inp.value.trim());
+    inp.value = '';
+  }
+
+  document.getElementById('nClaudeInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitNormalClaude();
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,1558 @@
+<!--
+  设计思路 · 方向 B：深海静谧舰桥（Abyssal Telemetry Bridge）
+  1. 这个方向叫「深海静谧舰桥」，灵感来自深夜录音室调音台与克制的科幻舰桥观测窗，完全避开廉价紫蓝霓虹和毛玻璃，只靠深岩板黑的明度层级与精密细线拉开纵深感。
+  2. 整体给人沉静、专业、高度可控的指挥官体验：四个助手视窗配有光学准星边角，Codex 用冰海青、Antigravity 用仪盘琥珀、Claude 用暖珊瑚色标识，运行中伴随柔和扫描光带与脉动示波器，让人隔着半张桌子也能感到系统“活着”。
+  3. 暗室级低眩光底色大幅减少夜间或长时间挂在副屏时的视觉刺眼感，平时安静退在背景里，一旦出现“等你选择”的琥珀灯或“被阻碍”的茜红灯，视线 0.5 秒就能精准捕捉。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI指挥台 · 方向 B：深海静谧舰桥</title>
+<style>
+  :root {
+    --void-bg: #080C10;
+    --hull-bg: #0E141B;
+    --rail-bg: #0B1016;
+    --panel-bg: #131B24;
+    --panel-elev: #18222E;
+    --slot-bg: #0D131A;
+
+    --line-dim: #1F2B38;
+    --line-mid: #2A394A;
+    --line-edge: #384B61;
+
+    --text-hi: #E6EEF7;
+    --text-mid: #9BAAC0;
+    --text-low: #63758C;
+
+    /* 厂商磷光色（严格克制面积） */
+    --codex: #38BDF8;
+    --codex-dim: rgba(56, 189, 248, 0.14);
+    --agy: #F59E0B;
+    --agy-dim: rgba(245, 158, 11, 0.14);
+    --claude: #E87D55;
+    --claude-dim: rgba(232, 125, 85, 0.15);
+
+    /* 状态信号色 */
+    --st-run: #2DD4BF;
+    --st-run-bg: rgba(45, 212, 191, 0.11);
+    --st-wait: #F59E0B;
+    --st-wait-bg: rgba(245, 158, 11, 0.13);
+    --st-block: #F43F5E;
+    --st-block-bg: rgba(244, 63, 94, 0.14);
+    --st-done: #4ADE80;
+    --st-done-bg: rgba(74, 222, 128, 0.11);
+
+    --font-sans: "DengXian", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    --font-display: "Bahnschrift", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    --font-mono: "Cascadia Mono", "Consolas", monospace;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--void-bg);
+    background-image:
+      radial-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+    background-size: 24px 24px;
+    font-family: var(--font-sans);
+    color: var(--text-hi);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* 1280 x 820 主窗口 */
+  .bridge-window {
+    width: 1280px;
+    height: 820px;
+    max-width: 100vw;
+    max-height: 100vh;
+    background: var(--hull-bg);
+    border: 1px solid var(--line-edge);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    display: grid;
+    grid-template-columns: 196px 1fr;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* 炫酷模式：启用微弱网格呼吸与更活跃的雷达扫描 */
+  .bridge-window.fancy-mode {
+    background-image:
+      linear-gradient(rgba(45, 212, 191, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(45, 212, 191, 0.03) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* ================= 左侧窄栏：舰桥任务频道槽 ================= */
+  .channel-rail {
+    background: var(--rail-bg);
+    border-right: 1px solid var(--line-mid);
+    display: flex;
+    flex-direction: column;
+    padding: 14px 10px 12px;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .bridge-mark {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 4px 12px;
+    border-bottom: 1px solid var(--line-dim);
+  }
+
+  .radar-emblem {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--line-edge);
+    background: var(--panel-bg);
+    border-radius: 4px;
+    display: grid;
+    place-items: center;
+    color: var(--st-run);
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .bridge-name {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-hi);
+  }
+
+  .bridge-code {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--text-low);
+    letter-spacing: 1.2px;
+    margin-top: 2px;
+  }
+
+  .rail-heading {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-low);
+    letter-spacing: 1.1px;
+    padding: 0 4px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .channel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .channel-item {
+    background: var(--slot-bg);
+    border: 1px solid var(--line-dim);
+    border-radius: 3px;
+    padding: 10px 9px 9px 12px;
+    text-align: left;
+    cursor: pointer;
+    position: relative;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .channel-item:hover {
+    border-color: var(--line-mid);
+    background: #111821;
+  }
+
+  .channel-item.active {
+    background: var(--panel-elev);
+    border-color: var(--line-edge);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .channel-bar {
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--line-mid);
+  }
+
+  .channel-item.active .channel-bar {
+    background: var(--st-run);
+    box-shadow: 0 0 8px rgba(45, 212, 191, 0.55);
+  }
+
+  .ch-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+
+  .ch-code {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-low);
+  }
+
+  .ch-flag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  .ch-flag.warn { background: var(--st-wait-bg); color: var(--st-wait); }
+  .ch-flag.ok   { background: var(--st-done-bg); color: var(--st-done); }
+  .ch-flag.off  { background: #161F29; color: var(--text-low); }
+
+  .ch-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-hi);
+    margin-bottom: 5px;
+  }
+
+  .ch-sub {
+    font-size: 11px;
+    color: var(--text-mid);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .ch-leds {
+    display: flex;
+    gap: 4px;
+  }
+
+  .ch-leds i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    display: block;
+  }
+
+  /* 左侧底部总遥测摘要 */
+  .rail-telemetry {
+    border-top: 1px solid var(--line-dim);
+    padding-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .tele-stat {
+    background: var(--slot-bg);
+    border: 1px solid var(--line-dim);
+    border-radius: 3px;
+    padding: 6px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  .tele-k {
+    font-size: 11px;
+    color: var(--text-low);
+  }
+
+  .tele-v {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-hi);
+    font-weight: 700;
+  }
+
+  /* ================= 右侧主舰桥 ================= */
+  .deck-main {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* 顶部遥测仪表区（紧凑） */
+  .telemetry-header {
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--line-mid);
+    padding: 10px 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .tele-row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .mission-id-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .mission-tag {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--st-run);
+    background: var(--st-run-bg);
+    border: 1px solid rgba(45, 212, 191, 0.32);
+    padding: 2px 6px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .mission-title {
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: var(--text-hi);
+    white-space: nowrap;
+  }
+
+  /* 串联管线式 3 步进度 */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex: 1;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .pipe-node {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--slot-bg);
+    border: 1px solid var(--line-mid);
+    padding: 4px 9px;
+    border-radius: 3px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .pipe-link {
+    width: 18px;
+    height: 1px;
+    background: var(--line-edge);
+    position: relative;
+  }
+
+  .pipe-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .pipe-node.p-run  { border-color: rgba(45, 212, 191, 0.4); }
+  .pipe-node.p-run .pipe-dot  { background: var(--st-run); box-shadow: 0 0 6px var(--st-run); }
+  .pipe-node.p-wait { border-color: rgba(245, 158, 11, 0.45); }
+  .pipe-node.p-wait .pipe-dot { background: var(--st-wait); box-shadow: 0 0 6px var(--st-wait); }
+  .pipe-node.p-block { border-color: rgba(244, 63, 94, 0.48); }
+  .pipe-node.p-block .pipe-dot { background: var(--st-block); box-shadow: 0 0 6px var(--st-block); }
+
+  .pipe-state {
+    font-size: 10.5px;
+    font-weight: 700;
+    margin-left: 2px;
+  }
+  .p-run .pipe-state { color: var(--st-run); }
+  .p-wait .pipe-state { color: var(--st-wait); }
+  .p-block .pipe-state { color: var(--st-block); }
+
+  /* 实体拨动式「炫酷模式」开关 */
+  .bridge-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--slot-bg);
+    border: 1px solid var(--line-edge);
+    border-radius: 3px;
+    padding: 4px 9px;
+    cursor: pointer;
+    color: var(--text-mid);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    flex-shrink: 0;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .bridge-switch:hover {
+    border-color: var(--st-run);
+    color: var(--text-hi);
+  }
+
+  .toggle-rail {
+    width: 34px;
+    height: 16px;
+    background: #1B2531;
+    border: 1px solid var(--line-edge);
+    border-radius: 2px;
+    position: relative;
+  }
+
+  .toggle-slider {
+    width: 14px;
+    height: 12px;
+    background: #7D91A8;
+    border-radius: 1px;
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .bridge-switch.on {
+    border-color: var(--st-run);
+    color: var(--st-run);
+  }
+
+  .bridge-switch.on .toggle-slider {
+    transform: translateX(16px);
+    background: var(--st-run);
+    box-shadow: 0 0 8px rgba(45, 212, 191, 0.7);
+  }
+
+  /* 顶部第二行：需求原话 + Claude 总控电文 + 告警指示灯 */
+  .tele-row-mid {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 10px;
+  }
+
+  .brief-box {
+    background: var(--slot-bg);
+    border: 1px solid var(--line-dim);
+    border-left: 2px solid var(--line-edge);
+    padding: 5px 10px;
+    border-radius: 2px;
+    font-size: 12px;
+    color: var(--text-mid);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .brief-box.claude-wire {
+    border-left-color: var(--claude);
+    background: rgba(232, 125, 85, 0.06);
+  }
+
+  .brief-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-low);
+    flex-shrink: 0;
+  }
+
+  .claude-wire .brief-label {
+    color: var(--claude);
+  }
+
+  .brief-text {
+    color: var(--text-hi);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 顶部第三行：舰桥告警栏 */
+  .alarm-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .alarm-prefix {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-low);
+    flex-shrink: 0;
+  }
+
+  .alarm-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 2px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: filter 0.15s ease;
+  }
+
+  .alarm-chip:hover {
+    filter: brightness(1.15);
+  }
+
+  .alarm-chip.warn {
+    background: var(--st-wait-bg);
+    border-color: rgba(245, 158, 11, 0.42);
+    color: #FCD34D;
+  }
+
+  .alarm-chip.crit {
+    background: var(--st-block-bg);
+    border-color: rgba(244, 63, 94, 0.48);
+    color: #FDA4AF;
+  }
+
+  .alarm-beacon {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: beaconBlink 1.8s ease-in-out infinite;
+  }
+
+  @keyframes beaconBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  /* ================= 2×2 观测视窗监控墙 ================= */
+  .monitor-grid {
+    padding: 12px 14px 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .viewport-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--line-mid);
+    border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  /* 四角光学准星装饰 */
+  .viewport-card::before,
+  .viewport-card::after {
+    content: "";
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .viewport-card::before {
+    top: 0;
+    left: 0;
+    border-top: 2px solid var(--accent);
+    border-left: 2px solid var(--accent);
+  }
+
+  .viewport-card::after {
+    bottom: 0;
+    right: 0;
+    border-bottom: 2px solid var(--line-edge);
+    border-right: 2px solid var(--line-edge);
+  }
+
+  .viewport-card.v-codex  { --accent: var(--codex); }
+  .viewport-card.v-agy    { --accent: var(--agy); }
+  .viewport-card.v-claude { --accent: var(--claude); }
+
+  .viewport-card.ping-focus {
+    border-color: var(--st-wait);
+    box-shadow: 0 0 0 1px var(--st-wait), 0 0 18px rgba(245, 158, 11, 0.22);
+  }
+
+  /* 运行中视窗顶部极克制扫描细光 */
+  .scan-line {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .scan-line::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -35%;
+    width: 35%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, var(--st-run), transparent);
+    animation: radarSweep 3.2s linear infinite;
+  }
+
+  .fancy-mode .scan-line::after {
+    animation-duration: 1.7s;
+  }
+
+  @keyframes radarSweep {
+    0% { left: -35%; }
+    100% { left: 105%; }
+  }
+
+  /* 视窗头部 */
+  .vp-head {
+    padding: 9px 12px 8px;
+    background: var(--panel-elev);
+    border-bottom: 1px solid var(--line-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .vp-id {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .vp-badge {
+    width: 30px;
+    height: 30px;
+    border-radius: 3px;
+    background: var(--slot-bg);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.4);
+  }
+
+  .vp-names {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .vp-name-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .vp-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-hi);
+  }
+
+  .vp-vendor {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 2px;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .vp-metrics {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-low);
+    display: flex;
+    gap: 10px;
+  }
+
+  .vp-metrics strong {
+    color: var(--text-mid);
+    font-weight: 600;
+  }
+
+  .vp-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 9px;
+    border-radius: 2px;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+    border: 1px solid transparent;
+  }
+
+  .vp-status.st-run {
+    background: var(--st-run-bg);
+    border-color: rgba(45, 212, 191, 0.38);
+    color: var(--st-run);
+  }
+  .vp-status.st-wait {
+    background: var(--st-wait-bg);
+    border-color: rgba(245, 158, 11, 0.42);
+    color: #FBBF24;
+  }
+  .vp-status.st-block {
+    background: var(--st-block-bg);
+    border-color: rgba(244, 63, 94, 0.45);
+    color: #FB7185;
+  }
+  .vp-status.st-done {
+    background: var(--st-done-bg);
+    border-color: rgba(74, 222, 128, 0.35);
+    color: var(--st-done);
+  }
+
+  .pulse-core {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--st-run);
+    box-shadow: 0 0 8px var(--st-run);
+    animation: corePulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes corePulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(0.72); opacity: 0.5; }
+  }
+
+  /* 示波器微动效 */
+  .scope-svg {
+    width: 34px;
+    height: 14px;
+    display: block;
+  }
+
+  .scope-path {
+    fill: none;
+    stroke: var(--st-run);
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 64;
+    stroke-dashoffset: 64;
+    animation: scopeDraw 2.1s linear infinite;
+  }
+
+  .fancy-mode .scope-path {
+    animation-duration: 1.15s;
+  }
+
+  @keyframes scopeDraw {
+    0% { stroke-dashoffset: 64; }
+    100% { stroke-dashoffset: -64; }
+  }
+
+  /* 嵌入式焦点读数槽：「现在正在做什么」最醒目 */
+  .now-slot {
+    background: var(--slot-bg);
+    border-bottom: 1px solid var(--line-mid);
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .now-slot::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+  }
+
+  .now-slot.s-run::before   { background: var(--st-run); }
+  .now-slot.s-wait::before  { background: var(--st-wait); }
+  .now-slot.s-block::before { background: var(--st-block); }
+  .now-slot.s-done::before  { background: var(--st-done); }
+
+  .now-slot.s-run   { background: rgba(45, 212, 191, 0.06); }
+  .now-slot.s-wait  { background: rgba(245, 158, 11, 0.08); }
+  .now-slot.s-block { background: rgba(244, 63, 94, 0.09); }
+  .now-slot.s-done  { background: rgba(74, 222, 128, 0.05); }
+
+  .now-k {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    padding: 2px 6px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .s-run .now-k   { background: rgba(45, 212, 191, 0.2); color: var(--st-run); }
+  .s-wait .now-k  { background: rgba(245, 158, 11, 0.22); color: #FCD34D; }
+  .s-block .now-k { background: rgba(244, 63, 94, 0.24); color: #FDA4AF; }
+  .s-done .now-k  { background: rgba(74, 222, 128, 0.18); color: var(--st-done); }
+
+  .now-v {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #F4F8FC;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 内部独立滚动遥测日志流 */
+  .tele-log {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 9px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .tele-log::-webkit-scrollbar {
+    width: 5px;
+  }
+  .tele-log::-webkit-scrollbar-track {
+    background: var(--slot-bg);
+  }
+  .tele-log::-webkit-scrollbar-thumb {
+    background: #2C3D4F;
+    border-radius: 2px;
+  }
+  .tele-log::-webkit-scrollbar-thumb:hover {
+    background: #3F556D;
+  }
+
+  .log-row {
+    display: grid;
+    grid-template-columns: 42px 16px 1fr;
+    gap: 7px;
+    align-items: start;
+    padding: 4px 7px;
+    border-radius: 2px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    animation: slideLog 0.22s ease;
+  }
+
+  @keyframes slideLog {
+    from { opacity: 0; transform: translateX(-4px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .log-ts {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-low);
+    padding-top: 1px;
+  }
+
+  .log-glyph {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-align: center;
+    padding-top: 1px;
+    font-weight: 700;
+  }
+
+  .log-row.t-act .log-glyph { color: var(--text-low); }
+  .log-row.t-act .log-body  { color: var(--text-mid); }
+
+  .log-row.t-say {
+    background: rgba(255, 255, 255, 0.035);
+    border-left: 2px solid var(--accent);
+  }
+  .log-row.t-say .log-glyph { color: var(--accent); }
+  .log-row.t-say .log-body  { color: var(--text-hi); }
+
+  .log-row.t-user {
+    background: rgba(56, 189, 248, 0.1);
+    border-left: 2px solid var(--codex);
+  }
+  .log-row.t-user .log-glyph { color: var(--codex); }
+  .log-row.t-user .log-body  { color: #E0F2FE; font-weight: 700; }
+
+  .log-row.t-alert {
+    background: var(--st-block-bg);
+    border-left: 2px solid var(--st-block);
+  }
+  .log-row.t-alert .log-glyph { color: #FB7185; }
+  .log-row.t-alert .log-body  { color: #FFE4E6; font-weight: 700; }
+
+  .log-row.t-alert.warn {
+    background: var(--st-wait-bg);
+    border-left-color: var(--st-wait);
+  }
+  .log-row.t-alert.warn .log-glyph { color: #FBBF24; }
+  .log-row.t-alert.warn .log-body  { color: #FEF3C7; }
+
+  /* 底部指令交互槽 */
+  .vp-console {
+    background: var(--slot-bg);
+    border-top: 1px solid var(--line-mid);
+    padding: 8px 12px 9px;
+    flex-shrink: 0;
+  }
+
+  .choice-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .opt-key {
+    background: var(--panel-elev);
+    border: 1px solid rgba(245, 158, 11, 0.36);
+    border-radius: 2px;
+    padding: 6px 8px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--text-hi);
+    font-family: var(--font-sans);
+    transition: all 0.14s ease;
+  }
+
+  .opt-key:hover {
+    background: rgba(245, 158, 11, 0.16);
+    border-color: var(--st-wait);
+  }
+
+  .opt-key.selected {
+    background: var(--st-wait);
+    color: #0B1016;
+    border-color: #FDE68A;
+  }
+
+  .opt-k-title {
+    font-size: 12px;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .opt-k-sub {
+    font-size: 10.5px;
+    opacity: 0.78;
+    display: block;
+  }
+
+  .cmd-line {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .btn-resume {
+    background: var(--st-block);
+    color: #FFF1F2;
+    border: 1px solid #FB7185;
+    border-radius: 2px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    font-family: var(--font-sans);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .btn-resume:hover {
+    filter: brightness(1.1);
+  }
+
+  .cmd-input {
+    flex: 1;
+    height: 30px;
+    background: #0A0F15;
+    border: 1px solid var(--line-mid);
+    border-radius: 2px;
+    padding: 0 9px;
+    color: var(--text-hi);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    outline: none;
+  }
+
+  .cmd-input:focus {
+    border-color: var(--claude);
+  }
+
+  .btn-send {
+    height: 30px;
+    padding: 0 12px;
+    background: var(--panel-elev);
+    border: 1px solid var(--line-edge);
+    color: var(--text-hi);
+    border-radius: 2px;
+    font-size: 12px;
+    font-family: var(--font-sans);
+    cursor: pointer;
+  }
+
+  .btn-send:hover {
+    border-color: var(--text-mid);
+  }
+
+  /* 底部遥测铭牌（无操作卡片） */
+  .vp-foot {
+    background: var(--slot-bg);
+    border-top: 1px solid var(--line-dim);
+    padding: 5px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-low);
+    flex-shrink: 0;
+  }
+
+  .activity-meter {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+  }
+
+  .activity-meter i {
+    width: 10px;
+    height: 4px;
+    background: var(--line-dim);
+    border-radius: 1px;
+    display: block;
+  }
+
+  .activity-meter i.lit {
+    background: var(--st-run);
+    animation: meterPulse 1.5s ease-in-out infinite;
+  }
+  .activity-meter i.lit:nth-child(2) { animation-delay: 0.2s; }
+  .activity-meter i.lit:nth-child(3) { animation-delay: 0.4s; }
+  .activity-meter i.lit:nth-child(4) { animation-delay: 0.6s; }
+
+  @keyframes meterPulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+  <div class="bridge-window" id="bridgeWindow">
+    <!-- 左侧窄栏：舰桥频道槽 -->
+    <aside class="channel-rail">
+      <div class="bridge-mark">
+        <div class="radar-emblem" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="12" r="9"></circle>
+            <circle cx="12" cy="12" r="4"></circle>
+            <line x1="12" y1="12" x2="18" y2="6"></line>
+          </svg>
+        </div>
+        <div>
+          <div class="bridge-name">AI 指挥台</div>
+          <div class="bridge-code">BRIDGE // v2.4</div>
+        </div>
+      </div>
+
+      <div class="rail-heading">
+        <span>CHANNELS</span>
+        <span>03</span>
+      </div>
+
+      <div class="channel-list">
+        <button class="channel-item active" type="button">
+          <span class="channel-bar"></span>
+          <div class="ch-top">
+            <span class="ch-code">CH-01</span>
+            <span class="ch-flag warn">2 待处理</span>
+          </div>
+          <div class="ch-title">串珠配色网页</div>
+          <div class="ch-sub">
+            <span>4 路信号在线</span>
+            <span class="ch-leds">
+              <i style="background: var(--st-run);"></i>
+              <i style="background: var(--st-wait);"></i>
+              <i style="background: var(--st-block);"></i>
+              <i style="background: var(--st-done);"></i>
+            </span>
+          </div>
+        </button>
+
+        <button class="channel-item" type="button">
+          <span class="channel-bar"></span>
+          <div class="ch-top">
+            <span class="ch-code">CH-02</span>
+            <span class="ch-flag ok">已完成</span>
+          </div>
+          <div class="ch-title">手账贴纸自动排版</div>
+          <div class="ch-sub">
+            <span>3 路完成 · 06:18</span>
+          </div>
+        </button>
+
+        <button class="channel-item" type="button">
+          <span class="channel-bar"></span>
+          <div class="ch-top">
+            <span class="ch-code">CH-03</span>
+            <span class="ch-flag off">待机</span>
+          </div>
+          <div class="ch-title">小红书封面模板库</div>
+          <div class="ch-sub">
+            <span>历史存档 · 昨天</span>
+          </div>
+        </button>
+      </div>
+
+      <div class="rail-telemetry">
+        <div class="tele-stat">
+          <span class="tele-k">累计消耗</span>
+          <span class="tele-v">68.5k TOK</span>
+        </div>
+        <div class="tele-stat">
+          <span class="tele-k">在线通道</span>
+          <span class="tele-v" style="color: var(--st-run);">4 / 4 LIVE</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右侧主舰桥 -->
+    <main class="deck-main">
+      <!-- 顶部紧凑仪表区 -->
+      <header class="telemetry-header">
+        <div class="tele-row-top">
+          <div class="mission-id-group">
+            <span class="mission-tag">CH-01</span>
+            <h1 class="mission-title">串珠配色网页</h1>
+          </div>
+
+          <div class="pipeline" aria-label="计划步骤进度">
+            <div class="pipe-node p-run">
+              <span class="pipe-dot"></span>
+              <span>1. Codex 做网页</span>
+              <span class="pipe-state">进行中</span>
+            </div>
+            <div class="pipe-link"></div>
+            <div class="pipe-node p-wait">
+              <span class="pipe-dot"></span>
+              <span>2. agy 调研配色</span>
+              <span class="pipe-state">等你选择</span>
+            </div>
+            <div class="pipe-link"></div>
+            <div class="pipe-node p-block">
+              <span class="pipe-dot"></span>
+              <span>3. Claude 写文案</span>
+              <span class="pipe-state">被阻碍</span>
+            </div>
+          </div>
+
+          <button class="bridge-switch" id="fancyBtn" type="button" aria-pressed="false">
+            <span>炫酷模式</span>
+            <span class="toggle-rail"><span class="toggle-slider"></span></span>
+          </button>
+        </div>
+
+        <div class="tele-row-mid">
+          <div class="brief-box" title="做一个能挑串珠配色的网页，顺便看看小红书上流行什么配色，再写几条种草文案">
+            <span class="brief-label">需求原话</span>
+            <span class="brief-text">做一个能挑串珠配色的网页，顺便看看小红书上流行什么配色，再写几条种草文案</span>
+          </div>
+          <div class="brief-box claude-wire">
+            <span class="brief-label">CLAUDE 统筹</span>
+            <span class="brief-text">「我把需求拆成三步，三个助手同时开工，最后我来审查」</span>
+          </div>
+        </div>
+
+        <div class="alarm-bar">
+          <span class="alarm-prefix">ALERT //</span>
+          <button class="alarm-chip warn" type="button" onclick="pingCard('vp-agy')">
+            <span class="alarm-beacon"></span>
+            <span>agy·调研 等你选择</span>
+          </button>
+          <button class="alarm-chip crit" type="button" onclick="pingCard('vp-claude')">
+            <span class="alarm-beacon"></span>
+            <span>Claude·文案 被阻碍：需要登录小红书创作者中心</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- 2×2 观测视窗 -->
+      <section class="monitor-grid">
+        <!-- 01. Codex·网页（运行中） -->
+        <article class="viewport-card v-codex" id="vp-codex-web">
+          <div class="scan-line" aria-hidden="true"></div>
+          <div class="vp-head">
+            <div class="vp-id">
+              <div class="vp-badge" title="Codex">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="8 6 2 12 8 18"></polyline>
+                  <polyline points="16 6 22 12 16 18"></polyline>
+                  <line x1="13" y1="5" x2="11" y2="19"></line>
+                </svg>
+              </div>
+              <div class="vp-names">
+                <div class="vp-name-row">
+                  <span class="vp-name">Codex·网页</span>
+                  <span class="vp-vendor">Codex</span>
+                </div>
+                <div class="vp-metrics">
+                  <span>用时 <strong>3分12秒</strong></span>
+                  <span>TOKEN <strong>28.4k</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="vp-status st-run">
+              <span class="pulse-core"></span>
+              <span>运行中</span>
+              <svg class="scope-svg" viewBox="0 0 36 14" aria-hidden="true">
+                <polyline class="scope-path" points="0,7 6,7 9,2 13,12 17,4 21,10 24,7 36,7"></polyline>
+              </svg>
+            </div>
+          </div>
+
+          <div class="now-slot s-run">
+            <span class="now-k">NOW</span>
+            <div class="now-v">正在修改文件 beads.html，给珠子加上高光</div>
+          </div>
+
+          <div class="tele-log">
+            <div class="log-row t-act">
+              <span class="log-ts">14:01</span>
+              <span class="log-glyph">▪</span>
+              <span class="log-body">接到任务：做串珠配色预览网页</span>
+            </div>
+            <div class="log-row t-say">
+              <span class="log-ts">14:01</span>
+              <span class="log-glyph">❝</span>
+              <span class="log-body">「我先看一下文件夹，再写网页和测试」</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">浏览文件夹</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">新建了文件：beads.html</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:03</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">运行测试</span>
+            </div>
+            <div class="log-row t-say">
+              <span class="log-ts">14:03</span>
+              <span class="log-glyph">❝</span>
+              <span class="log-body">「6 套配色都能切换了，接下来加高光」</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:04</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">修改文件：beads.html</span>
+            </div>
+          </div>
+
+          <div class="vp-foot">
+            <span>UNIT 01 // 活跃写入</span>
+            <span class="activity-meter" aria-hidden="true">
+              <i class="lit"></i><i class="lit"></i><i class="lit"></i><i class="lit"></i><i></i>
+            </span>
+          </div>
+        </article>
+
+        <!-- 02. agy·调研（等你选择） -->
+        <article class="viewport-card v-agy" id="vp-agy">
+          <div class="vp-head">
+            <div class="vp-id">
+              <div class="vp-badge" title="Antigravity">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <ellipse cx="12" cy="12" rx="9.5" ry="4.2" transform="rotate(-30 12 12)"></ellipse>
+                </svg>
+              </div>
+              <div class="vp-names">
+                <div class="vp-name-row">
+                  <span class="vp-name">agy·调研</span>
+                  <span class="vp-vendor">Antigravity</span>
+                </div>
+                <div class="vp-metrics">
+                  <span>用时 <strong>1分40秒</strong></span>
+                  <span>TOKEN <strong>18.7k</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="vp-status st-wait">
+              <span>等你选择</span>
+            </div>
+          </div>
+
+          <div class="now-slot s-wait">
+            <span class="now-k">WAIT</span>
+            <div class="now-v" id="bAgyNow">等你做选择</div>
+          </div>
+
+          <div class="tele-log" id="bAgyLog">
+            <div class="log-row t-act">
+              <span class="log-ts">14:01</span>
+              <span class="log-glyph">▪</span>
+              <span class="log-body">接到任务：调研小红书流行配色</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:01</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">在浏览器打开网页：小红书</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">网上搜索：串珠手链 配色</span>
+            </div>
+            <div class="log-row t-say">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">❝</span>
+              <span class="log-body">「找到 3 种最火的配色风格」</span>
+            </div>
+            <div class="log-row t-alert warn">
+              <span class="log-ts">14:03</span>
+              <span class="log-glyph">▲</span>
+              <span class="log-body">等你做选择</span>
+            </div>
+          </div>
+
+          <div class="vp-console">
+            <div class="choice-grid">
+              <button class="opt-key" type="button" onclick="chooseBridgeOpt(this, '1. 新中式（翡翠+南红+古法金）')">
+                <span class="opt-k-title">1. 新中式</span>
+                <span class="opt-k-sub">翡翠+南红+古法金</span>
+              </button>
+              <button class="opt-key" type="button" onclick="chooseBridgeOpt(this, '2. 白月光（白水晶+月光石）')">
+                <span class="opt-k-title">2. 白月光</span>
+                <span class="opt-k-sub">白水晶+月光石</span>
+              </button>
+              <button class="opt-key" type="button" onclick="chooseBridgeOpt(this, '3. 多巴胺（彩色琉璃+异形珍珠）')">
+                <span class="opt-k-title">3. 多巴胺</span>
+                <span class="opt-k-sub">彩色琉璃+异形珍珠</span>
+              </button>
+            </div>
+          </div>
+        </article>
+
+        <!-- 03. Claude·文案（被阻碍） -->
+        <article class="viewport-card v-claude" id="vp-claude">
+          <div class="vp-head">
+            <div class="vp-id">
+              <div class="vp-badge" title="Claude">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 3v18M3 12h18M5.8 5.8l12.4 12.4M18.2 5.8L5.8 18.2"></path>
+                </svg>
+              </div>
+              <div class="vp-names">
+                <div class="vp-name-row">
+                  <span class="vp-name">Claude·文案</span>
+                  <span class="vp-vendor">Claude</span>
+                </div>
+                <div class="vp-metrics">
+                  <span>用时 <strong>52秒</strong></span>
+                  <span>TOKEN <strong>9.1k</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="vp-status st-block">
+              <span>被阻碍</span>
+            </div>
+          </div>
+
+          <div class="now-slot s-block">
+            <span class="now-k">HALT</span>
+            <div class="now-v" id="bClaudeNow">被阻碍：需要你登录小红书创作者中心</div>
+          </div>
+
+          <div class="tele-log" id="bClaudeLog">
+            <div class="log-row t-act">
+              <span class="log-ts">14:01</span>
+              <span class="log-glyph">▪</span>
+              <span class="log-body">接到任务：写 3 条种草文案</span>
+            </div>
+            <div class="log-row t-say">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">❝</span>
+              <span class="log-body">「我先看看网页的效果」</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">查看文件：beads.html</span>
+            </div>
+            <div class="log-row t-alert">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">▲</span>
+              <span class="log-body">被阻碍：需要登录小红书创作者中心才能看到笔记数据</span>
+            </div>
+          </div>
+
+          <div class="vp-console">
+            <div class="cmd-line">
+              <button class="btn-resume" type="button" onclick="replyBridgeClaude('已登录小红书创作者中心，继续执行')">我已登录，继续</button>
+              <input class="cmd-input" id="bClaudeInput" type="text" placeholder="输入给 Claude·文案 的回复..." />
+              <button class="btn-send" type="button" onclick="submitBridgeClaude()">发送</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- 04. Codex·测试（完成） -->
+        <article class="viewport-card v-codex" id="vp-codex-test">
+          <div class="vp-head">
+            <div class="vp-id">
+              <div class="vp-badge" title="Codex">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="8 6 2 12 8 18"></polyline>
+                  <polyline points="16 6 22 12 16 18"></polyline>
+                  <line x1="13" y1="5" x2="11" y2="19"></line>
+                </svg>
+              </div>
+              <div class="vp-names">
+                <div class="vp-name-row">
+                  <span class="vp-name">Codex·测试</span>
+                  <span class="vp-vendor">Codex</span>
+                </div>
+                <div class="vp-metrics">
+                  <span>用时 <strong>2分05秒</strong></span>
+                  <span>TOKEN <strong>12.3k</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="vp-status st-done">
+              <span>完成</span>
+            </div>
+          </div>
+
+          <div class="now-slot s-done">
+            <span class="now-k">DONE</span>
+            <div class="now-v">完成</div>
+          </div>
+
+          <div class="tele-log">
+            <div class="log-row t-act">
+              <span class="log-ts">14:01</span>
+              <span class="log-glyph">▪</span>
+              <span class="log-body">接到任务：写颗数计算函数</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:01</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">新建了文件：beads.js</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">新建了文件：beads.test.js</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:02</span>
+              <span class="log-glyph">▸</span>
+              <span class="log-body">运行测试</span>
+            </div>
+            <div class="log-row t-say">
+              <span class="log-ts">14:03</span>
+              <span class="log-glyph">❝</span>
+              <span class="log-body">「3 个测试全部通过」</span>
+            </div>
+            <div class="log-row t-act">
+              <span class="log-ts">14:03</span>
+              <span class="log-glyph">✓</span>
+              <span class="log-body">完成</span>
+            </div>
+          </div>
+
+          <div class="vp-foot">
+            <span>UNIT 04 // STANDBY</span>
+            <span style="color: var(--st-done);">PASS 3/3</span>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+<script>
+  const fancyBtn = document.getElementById('fancyBtn');
+  const bridgeWindow = document.getElementById('bridgeWindow');
+  fancyBtn.addEventListener('click', () => {
+    const active = fancyBtn.classList.toggle('on');
+    fancyBtn.setAttribute('aria-pressed', String(active));
+    bridgeWindow.classList.toggle('fancy-mode', active);
+  });
+
+  function pingCard(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('ping-focus');
+    void el.offsetWidth;
+    el.classList.add('ping-focus');
+    setTimeout(() => el.classList.remove('ping-focus'), 1200);
+  }
+
+  function addBridgeUserLog(logId, text) {
+    const box = document.getElementById(logId);
+    const row = document.createElement('div');
+    row.className = 'log-row t-user';
+    row.innerHTML = '<span class="log-ts">刚刚</span><span class="log-glyph">»</span><span class="log-body"></span>';
+    row.querySelector('.log-body').textContent = '你回复：' + text;
+    box.appendChild(row);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function chooseBridgeOpt(btn, label) {
+    document.querySelectorAll('#vp-agy .opt-key').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.getElementById('bAgyNow').textContent = '已选定：' + label;
+    addBridgeUserLog('bAgyLog', label);
+  }
+
+  function replyBridgeClaude(msg) {
+    if (!msg.trim()) return;
+    document.getElementById('bClaudeNow').textContent = '已收到指令，准备恢复抓取数据';
+    addBridgeUserLog('bClaudeLog', msg);
+  }
+
+  function submitBridgeClaude() {
+    const inp = document.getElementById('bClaudeInput');
+    if (!inp.value.trim()) return;
+    replyBridgeClaude(inp.value.trim());
+    inp.value = '';
+  }
+
+  document.getElementById('bClaudeInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitBridgeClaude();
+  });
+</script>
+</body>
+</html>

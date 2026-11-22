@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>AI指挥台</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="brand-logo" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <rect x="3" y="3" width="7.5" height="7.5" rx="1.5"></rect>
+          <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"></rect>
+          <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"></rect>
+          <circle cx="17.2" cy="17.2" r="3.8"></circle>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">AI 指挥台</div>
+        <div class="brand-sub" id="brand-sub">暖纸工作台</div>
+      </div>
+    </div>
+    <div class="nav-caption"><span>任务列表</span><span id="run-count"></span></div>
+    <nav id="runs"></nav>
+    <div id="summary"></div>
+  </aside>
+  <main id="main">
+    <header id="head"></header>
+    <section id="wall"></section>
+  </main>
+  <aside id="drawer"></aside>
+  <script src="sound.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
