@@ -313,6 +313,7 @@ async function runAgent(run, name, spec) {
   const AGY_TOOLS = {
     read_file: '查看文件', view_file: '查看文件', list_dir: '浏览文件夹', find_by_name: '查找文件', grep_search: '在文件里搜索内容',
     write_to_file: '写入文件', replace_file_content: '修改文件', multi_replace_file_content: '修改文件', sed_file: '修改文件', notebook_edit: '修改笔记本',
+    edit_file: '修改文件', create_file: '新建文件', delete_file: '删除文件',
     search_web: '网上搜索', read_url_content: '读取网页', open_browser_url: '在浏览器打开网页', read_browser_page: '阅读浏览器页面',
     browser_click_element: '在网页上点击', click_browser_pixel: '在网页上点击', browser_input: '在网页上输入文字', browser_scroll: '滚动网页',
     browser_scroll_dom: '滚动网页', browser_press_key: '在网页上按键', capture_browser_screenshot: '给网页截图', browser_get_dom: '读取网页结构',
@@ -323,7 +324,7 @@ async function runAgent(run, name, spec) {
     manage_task: '更新任务清单', wait: '等待', wait_5_seconds: '等待',
     send_message: '给浏览器子助手下指令（具体操作在你的 Chrome 里进行）',
   };
-  const AGY_WRITE = new Set(['write_to_file', 'replace_file_content', 'multi_replace_file_content', 'sed_file', 'notebook_edit']);
+  const AGY_WRITE = new Set(['write_to_file', 'replace_file_content', 'multi_replace_file_content', 'sed_file', 'notebook_edit', 'edit_file', 'create_file', 'delete_file']);
   const pick = (obj, keys) => { for (const k of keys) if (obj && obj[k]) return String(obj[k]); return ''; };
   let agyStreaming = false;
   const onAgy = (ev) => {

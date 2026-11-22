@@ -36,10 +36,16 @@ while ($added) { $added = $false; foreach ($p in $all) { if ($tree -contains $p.
 $alive = [bool]($all | Where-Object { $_.ProcessId -eq ${Number(rootPid)} })
 function CpuSum { $s = 0; foreach ($id in $tree) { $g = Get-Process -Id $id; if ($g) { $s += $g.TotalProcessorTime.TotalMilliseconds } }; $s }
 $c1 = CpuSum; Start-Sleep -Milliseconds 2000; $c2 = CpuSum
-$net = @(Get-NetTCPConnection -State Established | Where-Object { $tree -contains $_.OwningProcess -and $_.RemoteAddress -notmatch '^(127\\.|::1|0\\.0\\.0\\.0)' }).Count
+# 对外连接：直接连到外网的算；连到本机端口、但那个端口不是它自己的组件在用（比如本机的代理程序）的也算
+$net = 0; $via = @()
+foreach ($c in @(Get-NetTCPConnection -State Established | Where-Object { $tree -contains $_.OwningProcess })) {
+  if ($c.RemoteAddress -notmatch '^(127\\.|::1$|0\\.0\\.0\\.0)') { $net++; continue }
+  $l = Get-NetTCPConnection -LocalPort $c.RemotePort -State Listen | Select-Object -First 1
+  if ($l -and -not ($tree -contains $l.OwningProcess)) { $net++; $n = (Get-Process -Id $l.OwningProcess).ProcessName; if ($n -and -not ($via -contains $n)) { $via += $n } }
+}
 $procs = foreach ($p in $all) { if ($tree -contains $p.ProcessId -and $p.ProcessId -ne ${Number(rootPid)}) {
   [pscustomobject]@{ pid = $p.ProcessId; ppid = $p.ParentProcessId; name = $p.Name; cmd = [string]$p.CommandLine; ageSec = [int]((Get-Date) - $p.CreationDate).TotalSeconds } } }
-[pscustomobject]@{ alive = $alive; cpuMs = [math]::Round($c2 - $c1); net = $net; procs = @($procs) } | ConvertTo-Json -Depth 4 -Compress
+[pscustomobject]@{ alive = $alive; cpuMs = [math]::Round($c2 - $c1); net = $net; via = @($via); procs = @($procs) } | ConvertTo-Json -Depth 4 -Compress
 `);
 }
 
@@ -81,9 +87,15 @@ async function diagnose(meta, lastActivityMs) {
     return { verdict: 'busy', title: '它正在本机干活', detail: `最近 2 秒电脑在为它工作（约占一个核心的 ${cpuPct}%），只是暂时没有输出新动态，比如在跑测试或处理文件。建议再等等。`, actions: ['wait'] };
   }
   if (info.net > 0) {
-    return { verdict: 'thinking', title: '它在等 AI 服务器回复', detail: `它和服务器的连接是通的（${info.net} 条连接），本机很安静，说明在等 AI 想好下一步。遇到难题时深度思考可能要好几分钟，已经等了 ${mins(quiet)}。建议再等等；超过 10 分钟还没动静，可以重启它。`, actions: quiet > 600 ? ['restart', 'wait'] : ['wait'] };
+    const via = (Array.isArray(info.via) ? info.via : info.via ? [info.via] : []).filter(Boolean);
+    const viaText = via.length ? `（经过本机的 ${via.join('、')} 转发）` : '';
+    return {
+      verdict: 'thinking', title: '它在等 AI 服务器回复',
+      detail: `它和 AI 服务器的连接是通的${viaText}，本机很安静，说明 AI 正在云端思考下一步。思考过程不会实时显示，遇到复杂的改动时，安静 5～10 分钟很常见（已经等了 ${mins(quiet)}）。建议继续等${quiet > 900 ? '；已经超过 15 分钟，如果还想等也可以，实在不放心再重启它' : '，不要重启，否则它要从头再想一遍'}。`,
+      actions: quiet > 900 ? ['wait', 'restart'] : ['wait'],
+    };
   }
-  return { verdict: 'stuck', title: '它可能卡住了', detail: `程序还在，但已经 ${mins(quiet)} 没有动静，电脑没在为它干活，也没有在和服务器通信。建议重启它，让它从中断的地方接着做。`, actions: ['restart', 'wait'] };
+  return { verdict: 'stuck', title: '它可能卡住了', detail: `程序还在，但已经 ${mins(quiet)} 没有动静，电脑没在为它干活，也没有发现它在和 AI 服务器通信。${quiet < 600 ? '如果它刚开始处理比较复杂的改动，也可能只是在思考，可以再等几分钟后重新检查；' : ''}确定卡住的话，可以重启它，让它从中断的地方接着做。`, actions: quiet < 600 ? ['wait', 'restart'] : ['restart', 'wait'] };
 }
 
 module.exports = { diagnose };

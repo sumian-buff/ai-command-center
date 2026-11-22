@@ -18,7 +18,7 @@ const toasts = new Map();
 const tiles = new Map();
 const diags = new Map();     // run/name -> 「看看卡哪了」的结果（或 'loading'）
 const dismissed = new Map(); // run/name -> 你点了「继续等」时的最后动态时间
-const STALE_MS = 180000;     // 运行中超过 3 分钟没动静，算「可能卡住」
+const STALE_MS = 300000;     // 运行中超过 5 分钟没有新动态才提示（AI 在云端深度思考时，安静几分钟很常见）
 
 // ---------- 小工具 ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -366,7 +366,7 @@ function renderWait(run, a) {
       return `<div class="diag v-${esc(d.verdict)}"><div class="d-title">${esc(d.title)}</div><div class="d-detail">${esc(d.detail)}</div>
         <div class="w-row">${d.actions.map((x) => btn[x] || '').join('')}</div></div>${toast}`;
     }
-    if (a._stale) return `<div class="w-row stale-row"><span class="w-hint">已经 ${Math.floor(a._quiet / 60000)} 分钟没有动静了</span><button class="btn dark" data-diag="${esc(a.name)}">看看卡哪了</button></div>${toast}`;
+    if (a._stale) return `<div class="w-row stale-row"><span class="w-hint">已经 ${Math.floor(a._quiet / 60000)} 分钟没有新动态（AI 深度思考时很常见）</span><button class="btn dark" data-diag="${esc(a.name)}">看看卡哪了</button></div>${toast}`;
     return toast;
   }
   const needAction = needsYou(a) || a.handover || ['stopped', 'failed', 'interrupted'].includes(a.status);
