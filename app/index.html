@@ -31,6 +31,14 @@
     <section id="wall"></section>
   </main>
   <aside id="drawer"></aside>
+  <dialog id="mark-dialog" aria-labelledby="mark-question">
+    <p id="mark-question"></p>
+    <p id="mark-error" class="w-toast" role="alert"></p>
+    <div class="w-row">
+      <button class="mini" id="mark-cancel" autofocus>取消</button>
+      <button class="btn dark" id="mark-confirm">标记为完成</button>
+    </div>
+  </dialog>
   <script src="sound.js"></script>
   <script src="sidebar.js"></script>
   <script src="renderer.js"></script>

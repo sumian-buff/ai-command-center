@@ -168,6 +168,7 @@ Claude 需要知道"派活要通过指挥台"。把 [`docs/CLAUDE.example.md`](d
 | 想跟它多聊几句 | 点「对话」，右侧打开聊天窗口 |
 | 要你登录网站 | agy 会在你的 Chrome 里打开登录页并停下。你在 Chrome 里登录，然后点「让它继续」 |
 | 觉得它跑偏了 | 点「停止」，回到 Claude 对话里说明哪里不对，由 Claude 重新安排 |
+| 助手已经验收，卡片还显示已停止、被阻碍、失败或等你选择 | 在普通或炫酷模式下，点对应主助手或子助手卡片上的「标记为完成」并确认，卡片和关联的计划步骤就会显示完成 |
 | 它很久没动静 | 运行中超过 3 分钟没动静，画面底部会出现「看看卡哪了」（鼠标移到画面上也随时能点）。检查几秒后会告诉你是哪种情况：**在等 AI 服务器回复**（再等等）、**在本机干活**（再等等）、**在等一个不会结束的程序**（点「结束这个程序」，它就能接着做）、**真的卡住了**（点「重启它，接着做」，之前做好的部分不会丢） |
 | 想在 Codex 自己的程序里看 | 点「在 Codex 里打开」，会跳到 Codex 桌面版里的这段对话 |
 | Claude 侧边栏会话需要你 | 点「在 Claude 里打开」，在 Claude 程序里直接回复它 |
@@ -229,6 +230,7 @@ node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --name <显示�
 node dispatch.mjs resume --run <任务ID> --name <名字> (--text <话> | --message-file <文件>)
 node dispatch.mjs open   --run <任务ID> --name <名字> [--terminal]
 node dispatch.mjs stop   --run <任务ID> --name <名字>
+node dispatch.mjs mark   --run <任务ID> --name <名字> [--text <完成说明>]
 
 # 计划步骤和 Claude 的说明
 node dispatch.mjs step --run <任务ID> --n <步骤号> --status todo|doing|done|blocked

@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, Notification, shell } = require('electron');
 const { readSession } = require('./transcript');
 const { diagnose, includeChildActivity } = require('./diagnose');
+const { markAgentDone } = require('../mark-done.cjs');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
@@ -50,6 +51,12 @@ function loadAgents(runDir) {
       let s;
       try { s = readSession(meta); } catch (e) { s = { events: [{ ts: meta.startedAt, type: 'error', text: '读取会话记录出错：' + e.message }], status: 'interrupted', current: '读取出错' }; }
       const tm = s.transcript ? mtime(s.transcript) : mtime(path.join(d, 'meta.json'));
+      if (meta.status === 'done') {
+        // 手动验收写在任务目录里，会话记录仍保留验收前的对话和状态。
+        const file = path.join(d, 'events.jsonl');
+        return { ...meta, ...s, status: meta.status, current: meta.current, options: meta.options, endedAt: meta.endedAt,
+          events: [...s.events, ...readLines(file)].slice(-300), rawMtime: tm, _mtime: Math.max(tm, mtime(file)) };
+      }
       return { ...meta, ...s, rawMtime: tm, _mtime: tm };
     }
     if (meta.status === 'running' && !alive(meta.pid)) meta.status = 'interrupted';
@@ -260,6 +267,10 @@ app.whenReady().then(() => {
   ipcMain.handle('runs:list', () => listRuns());
   ipcMain.handle('run:get', (_e, id) => loadRun(id));
   ipcMain.handle('agent:stop', (_e, { run, name }) => stopAgent(run, name));
+  ipcMain.handle('agent:mark-done', (_e, { run, name }) => {
+    try { markAgentDone(RUNS, run, name); return ''; }
+    catch (err) { return err.message; }
+  });
   ipcMain.handle('agent:reply', (_e, { run, name, text }) => replyAgent(run, name, text));
   ipcMain.handle('agent:open', (_e, { run, name, terminal }) => openAgent(run, name, terminal));
   ipcMain.handle('layout:get', () => readJSON(LAYOUT, null));

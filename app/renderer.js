@@ -267,6 +267,21 @@ function codeLine(line) {
   return div;
 }
 
+function updateMarkButton(row, agent) {
+  const existing = $('[data-mark-done]', row);
+  if (!['stopped', 'blocked', 'failed', 'question'].includes(agent.status)) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const button = document.createElement('button');
+  button.className = 'mini';
+  button.dataset.markDone = agent.name;
+  button.textContent = '标记为完成';
+  button.setAttribute('aria-haspopup', 'dialog');
+  row.appendChild(button);
+}
+
 function updateChildCards(el, children) {
   const group = $('.t-children', el);
   const cards = el._childCards ??= new Map();
@@ -287,9 +302,10 @@ function updateChildCards(el, children) {
       cards.set(child.name, card);
     }
     const events = child.events || [];
-    const latest = events.findLast((ev) => ['act', 'say', 'warn', 'error', 'blocked'].includes(ev.type));
+    const latest = events.findLast((ev) => ['act', 'say', 'warn', 'error', 'blocked', 'done'].includes(ev.type));
     const current = plain(latest?.text || child.current || '');
     const summary = $('summary', card);
+    updateMarkButton(summary, child);
     if ($('.sub-current', summary).textContent !== current) {
       $('.sub-current', summary).textContent = current;
       $('.sub-current', summary).title = current;
@@ -335,6 +351,7 @@ function updateTile(run, a, children) {
   updateChildCards(el, children);
   setText('.chip-text', stText);
   const now = $('.now', el);
+  updateMarkButton(now, a);
   if (now.className !== `now ${hero}`) now.className = `now ${hero}`;
   setText('.now-k', heroK);
   const cur = plain(a.current || '');
@@ -656,6 +673,25 @@ function applyCool() {
 }
 
 // ---------- 交互 ----------
+const markDialog = $('#mark-dialog');
+const markConfirm = $('#mark-confirm');
+const markCancel = $('#mark-cancel');
+markDialog.addEventListener('cancel', (e) => { if (markConfirm.disabled) e.preventDefault(); });
+markCancel.addEventListener('click', () => markDialog.close());
+markConfirm.addEventListener('click', async () => {
+  markConfirm.disabled = markCancel.disabled = true;
+  try {
+    const err = await api.markAgentDone(markDialog.dataset.markRun, markDialog.dataset.name);
+    if (err) $('#mark-error').textContent = err;
+    else markDialog.close();
+  } catch (err) {
+    $('#mark-error').textContent = err.message || '标记失败，请重试。';
+  } finally {
+    markConfirm.disabled = markCancel.disabled = false;
+    tick();
+  }
+});
+
 document.addEventListener('input', (e) => { if (e.target.matches('[data-draft]')) drafts.set(e.target.dataset.draft, e.target.value); });
 document.addEventListener('change', (e) => {
   if (e.target.id === 'cool') { cool = e.target.checked; savePref('cool', cool); applyCool(); }
@@ -673,6 +709,15 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('click', async (e) => {
   const t = (sel) => e.target.closest(sel);
   let b;
+  if ((b = t('[data-mark-done]'))) {
+    e.preventDefault(); // 子助手按钮在摘要里，点击时保持原来的展开状态
+    markDialog.dataset.markRun = currentRun.id;
+    markDialog.dataset.name = b.dataset.markDone;
+    $('#mark-question').textContent = `确定把『${b.dataset.markDone}』标为完成？这只改显示状态，不会让助手继续干活。`;
+    $('#mark-error').textContent = '';
+    markDialog.showModal();
+    return;
+  }
   if ((b = t('[data-run]'))) { selected = b.dataset.run; followLatest = false; chatWith = null; lastSide = ''; lastHead = ''; return tick(); }
   if ((b = t('[data-notes]'))) { notesOpen = !notesOpen; lastHead = ''; return tick(); }
   if ((b = t('[data-listen]'))) {

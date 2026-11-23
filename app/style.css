@@ -316,6 +316,7 @@ body.cool .t-actions { background: linear-gradient(90deg, transparent, var(--car
 body.cool .now { margin: 0; border-radius: 0; border-bottom: 1px solid var(--line-soft); padding: 8px 14px; }
 .now-k { font-size: 11px; font-weight: 700; letter-spacing: .4px; flex: none; color: var(--ink-muted); }
 .now-text { font-size: 15.5px; font-weight: 700; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.now [data-mark-done] { flex: none; margin-left: auto; }
 body.cool .now-text { font-size: 14px; }
 .h-run { background: var(--st-run-hero); } .h-run::before { background: var(--st-run); } .h-run .now-k { color: var(--st-run); }
 .h-wait { background: var(--st-wait-hero); } .h-wait::before { background: var(--st-wait); } .h-wait .now-k { color: var(--st-wait); }
@@ -387,10 +388,10 @@ body.cool .t-term {
 .t-children { min-height: 0; max-height: min(35%, 180px); overflow-y: auto; padding: 4px 12px; background: var(--card-soft); border-top: 1px solid var(--line-soft); }
 .sub-card { color: var(--ink-sub); border-left: 2px solid var(--v-color); margin: 3px 0; background: var(--card-bg); }
 .sub-card.flash { outline: 2px solid var(--accent-main); }
-.sub-card summary { display: grid; grid-template-columns: 10px auto auto minmax(0, 1fr); gap: 7px; align-items: center; padding: 5px 8px; font-size: 12px; cursor: pointer; }
+.sub-card summary { display: grid; grid-template-columns: 10px fit-content(35%) auto minmax(0, 1fr); grid-auto-flow: column; gap: 7px; align-items: center; padding: 5px 8px; font-size: 12px; cursor: pointer; }
 .sub-card summary::before { content: '▸'; color: var(--v-color); }
 .sub-card[open] summary::before { content: '▾'; }
-.sub-name { color: var(--ink-main); }
+.sub-name { color: var(--ink-main); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sub-current { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub-status { font-size: 10.5px; font-weight: 700; border-radius: 4px; padding: 1px 5px; }
 .sub-status.h-run { color: var(--st-run); } .sub-status.h-wait { color: var(--st-wait); }
@@ -442,6 +443,12 @@ body.cool .btn.dark { background: transparent; color: var(--ink-main); border: 1
 body.cool .mini { border-radius: 4px; background: transparent; }
 .btn:disabled, .mini:disabled, .w-opt:disabled { opacity: .5; cursor: default; }
 .link { border: 0; background: none; padding: 0; font-size: 12px; color: var(--ink-muted); text-decoration: underline; cursor: pointer; }
+
+#mark-dialog { width: min(370px, 90vw); padding: 20px; border: 1px solid var(--line-outer); border-radius: var(--r); background: var(--card-bg); color: var(--ink-main); overflow-wrap: anywhere; }
+#mark-dialog::backdrop { background: rgb(0 0 0 / 40%); }
+#mark-dialog p { margin: 0 0 16px; }
+#mark-dialog .w-row { justify-content: flex-end; }
+#mark-error:empty { display: none; }
 
 /* ================= 聊天窗口 ================= */
 #drawer { display: none; }

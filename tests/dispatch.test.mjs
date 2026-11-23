@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
@@ -37,7 +37,7 @@ function sandbox(t) {
   const agents = path.join(work, 'runs', 'case', 'agents')
   const home = path.join(work, 'home')
   fs.mkdirSync(home)
-  for (const f of fs.readdirSync(repo).filter(f => f.endsWith('.mjs'))) {
+  for (const f of fs.readdirSync(repo).filter(f => f.endsWith('.mjs') || f === 'mark-done.cjs')) {
     fs.copyFileSync(path.join(repo, f), path.join(work, f))
   }
   fs.writeFileSync(path.join(work, 'prompt.txt'), prompt)
@@ -56,10 +56,10 @@ function sandbox(t) {
     assert.equal(path.dirname(work), path.resolve(repo))
     fs.rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   })
-  function dispatch(command, args, scenario) {
+  function dispatch(command, args, scenario, agentName = name) {
     const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home, FAKE_SCENARIO: scenario }
     const child = spawn(process.execPath, ['--require', redirect, path.join(work, 'dispatch.mjs'), command,
-      '--run', 'case', '--name', name, ...args], { env, cwd: work, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      '--run', 'case', '--name', agentName, ...args], { env, cwd: work, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
     for (const pipe of [child.stdout, child.stderr]) {
       pipe.setEncoding('utf8')
@@ -85,6 +85,7 @@ function sandbox(t) {
       '--agent', agent, '--cwd', work, '--task', '离线测试', '--prompt-file', 'prompt.txt', ...args], scenario),
     resume: (scenario) => dispatch('resume', ['--text', '接着做'], scenario),
     stop: () => dispatch('stop', [], 'stop'),
+    mark: (agentName = name, text) => dispatch('mark', text === undefined ? [] : ['--text', text], 'mark', agentName),
     meta, sub, wire, work,
     gate: file => fs.writeFileSync(path.join(work, file), ''),
     events: (n = name) => lines(path.join(agents, n, 'events.jsonl')),
@@ -223,3 +224,112 @@ for (const agent of ['codex', 'claude']) {
     assert.match(h.result(), /测试回复/)
   })
 }
+
+function seedAgent(h, meta) {
+  const dir = path.join(h.work, 'runs', 'case', 'agents', meta.name)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta))
+  return dir
+}
+
+test('mark 把已停止的助手改为完成，保留历史并追加默认说明', async t => {
+  const h = sandbox(t)
+  const dir = seedAgent(h, { name, agent: 'codex', status: 'stopped', current: '已被你停止', options: [], tokens: 42 })
+  const previous = { ts: '2026-01-01T00:00:00.000Z', type: 'stopped', text: '已被你停止' }
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), JSON.stringify(previous) + '\n')
+  const before = Date.now()
+  await exitIs(h.mark(), 0)
+  const after = Date.now()
+  const meta = h.meta()
+  assert.equal(meta.status, 'done')
+  assert.equal(meta.current, '完成')
+  assert.equal(meta.tokens, 42)
+  assert.ok(Date.parse(meta.endedAt) >= before && Date.parse(meta.endedAt) <= after)
+  const events = h.events()
+  assert.equal(events.length, 2)
+  assert.deepEqual(events[0], previous)
+  assert.equal(events[1].type, 'done')
+  assert.equal(events[1].text, '已由你手动标记为完成')
+  assert.ok(Date.parse(events[1].ts) >= before && Date.parse(events[1].ts) <= after)
+  assert.deepEqual(h.wire(), [])
+})
+
+test('mark 同步指定的计划步骤，清空选项并保留已有结束时间', async t => {
+  const h = sandbox(t)
+  const endedAt = '2026-01-01T00:00:00.000Z'
+  seedAgent(h, { name, agent: 'codex', status: 'question', options: ['方案一', '方案二'], endedAt, step: 2 })
+  const planFile = path.join(h.work, 'runs', 'case', 'plan.json')
+  const first = { text: '整理资料', owner: '其他助手', status: 'doing' }
+  const second = { text: '核对结果', owner: name, status: 'blocked' }
+  fs.writeFileSync(planFile, JSON.stringify({ title: '验收', steps: [first, second] }))
+  const reason = '总指挥已核对两种方案，选用方案二'
+  await exitIs(h.mark(name, reason), 0)
+  const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'))
+  assert.equal(plan.title, '验收')
+  assert.deepEqual(plan.steps, [first, { ...second, status: 'done' }])
+  assert.equal(h.meta().endedAt, endedAt)
+  assert.deepEqual(h.meta().options, [])
+  assert.equal(h.events().at(-1).text, reason)
+})
+
+test('mark 拒绝仍在运行的助手，保留它的记录和计划', async t => {
+  const h = sandbox(t)
+  const active = { name, agent: 'codex', status: 'running', pid: process.pid, step: 1 }
+  seedAgent(h, active)
+  const planFile = path.join(h.work, 'runs', 'case', 'plan.json')
+  const plan = { steps: [{ text: '运行中', status: 'doing' }] }
+  fs.writeFileSync(planFile, JSON.stringify(plan))
+  const { code, output } = await h.mark()
+  assert.notEqual(code, 0)
+  assert.match(output, /运行/)
+  assert.deepEqual(h.meta(), active)
+  assert.deepEqual(h.events(), [])
+  assert.deepEqual(JSON.parse(fs.readFileSync(planFile, 'utf8')), plan)
+})
+
+test('mark 可以单独标记名字带分隔符的子助手', async t => {
+  const h = sandbox(t)
+  const parent = { name, agent: 'agy', status: 'running', pid: process.pid }
+  seedAgent(h, parent)
+  const childName = name + ' › 子助手 1'
+  seedAgent(h, { name: childName, parent: name, agent: 'agy', status: 'blocked', pid: process.pid })
+  await exitIs(h.mark(childName), 0)
+  assert.equal(h.meta(childName).status, 'done')
+  assert.equal(h.events(childName).at(-1).type, 'done')
+  assert.deepEqual(h.meta(), parent)
+  assert.deepEqual(h.events(), [])
+})
+
+test('mark 在助手名字不存在时报错，并保留原有助手', async t => {
+  const h = sandbox(t)
+  const existing = { name, agent: 'codex', status: 'failed' }
+  seedAgent(h, existing)
+  const { code, output } = await h.mark('资料助手')
+  assert.notEqual(code, 0)
+  assert.match(output, /不存在|找不到|没有/)
+  assert.deepEqual(h.meta(), existing)
+  assert.deepEqual(fs.readdirSync(path.join(h.work, 'runs', 'case', 'agents')), [name])
+})
+
+test('mark 允许修正进程已经退出但仍记为 running 的助手', async t => {
+  const h = sandbox(t)
+  const exited = spawnSync(process.execPath, ['-e', ''], { cwd: h.work, windowsHide: true })
+  assert.equal(exited.status, 0)
+  seedAgent(h, { name, agent: 'codex', status: 'running', pid: exited.pid })
+  await exitIs(h.mark(), 0)
+  assert.equal(h.meta().status, 'done')
+})
+
+test('mark 可以验收失败后被接管的助手，重复标记只记一次', async t => {
+  const h = sandbox(t)
+  seedAgent(h, { name, agent: 'codex', status: 'failed', handover: true })
+  await exitIs(h.mark(name, '已经接手验收'), 0)
+  const first = h.meta()
+  assert.equal(first.status, 'done')
+  assert.ok(!first.handover)
+  const events = h.events()
+  assert.equal(events.length, 1)
+  await exitIs(h.mark(), 0)
+  assert.deepEqual(h.meta(), first)
+  assert.deepEqual(h.events(), events)
+})

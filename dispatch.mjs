@@ -8,6 +8,7 @@
 //   node dispatch.mjs resume --run <任务ID> --name <显示名> (--message-file <文件> | --text <话>)
 //   node dispatch.mjs open   --run <任务ID> --name <显示名>      打开它自己的对话窗口
 //   node dispatch.mjs stop   --run <任务ID> --name <显示名>
+//   node dispatch.mjs mark   --run <任务ID> --name <显示名> [--text <说明>]
 //   node dispatch.mjs step   --run <任务ID> --n <步骤号> --status todo|doing|done|blocked
 //   node dispatch.mjs note   --run <任务ID> --text <Claude 的说明>
 //   node dispatch.mjs status [--run <任务ID>]                    给 Claude 看的进度汇总
@@ -19,6 +20,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { createAgyChildren, stopAgyChildren } from './agy-children.mjs';
+import { alive, markAgentDone } from './mark-done.cjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const RUNS = path.join(ROOT, 'runs');
@@ -61,10 +63,6 @@ const cleanText = (t) =>
     .replace(/\r/g, '')
     .trim();
 const psQuote = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-function alive(pid) {
-  if (!pid) return false;
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
 const agentDir = (run, name) => path.join(RUNS, String(run), 'agents', String(name));
 
 // ---------- 网站名字 ----------
@@ -634,7 +632,7 @@ function cmdAttach(a) {
   console.log(`已登记：${name}（Claude 侧边栏会话 ${sessionId}）`);
 }
 
-// ---------- 命令：stop / step / note / status ----------
+// ---------- 命令：stop / mark / step / note / status ----------
 function killTree(pid) {
   try {
     execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'pipe', windowsHide: true });
@@ -661,6 +659,15 @@ function cmdStop(a) {
   }
   if (meta.childPid) { try { execFileSync('taskkill', ['/PID', String(meta.childPid), '/T', '/F'], { stdio: 'ignore' }); } catch {} }
 }
+function cmdMark(a) {
+  try {
+    markAgentDone(RUNS, a.run, a.name, a.text);
+    console.log(`「${a.name}」已标记为完成。`);
+  } catch (e) {
+    console.error(e.message);
+    process.exitCode = 2;
+  }
+}
 function cmdStep(a) {
   const f = path.join(RUNS, String(a.run), 'plan.json');
   const plan = readJSON(f, null);
@@ -685,7 +692,7 @@ function cmdStatus(a) {
     for (const n of names) {
       const m = readJSON(path.join(agentDir(r, n), 'meta.json'), null);
       if (!m) continue;
-      if (m.agent === 'claude-session') { console.log(`- ${n}（Claude 侧边栏会话 ${m.sessionId}）进度请用 list_sessions / 打开会话查看`); continue; }
+      if (m.agent === 'claude-session' && m.status !== 'done') { console.log(`- ${n}（Claude 侧边栏会话 ${m.sessionId}）进度请用 list_sessions / 打开会话查看`); continue; }
       const st = m.status === 'running' && !alive(m.pid) ? '已中断' : NAMES[m.status] || m.status;
       const evs = fs.existsSync(path.join(agentDir(r, n), 'events.jsonl'))
         ? fs.readFileSync(path.join(agentDir(r, n), 'events.jsonl'), 'utf8').split('\n').filter(Boolean).slice(-3).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
@@ -705,9 +712,10 @@ if (cmd === 'run') await cmdRun(args);
 else if (cmd === 'resume') await cmdResume(args);
 else if (cmd === 'open') cmdOpen(args);
 else if (cmd === 'stop') cmdStop(args);
+else if (cmd === 'mark') cmdMark(args);
 else if (cmd === 'step') cmdStep(args);
 else if (cmd === 'note') cmdNote(args);
 else if (cmd === 'status') cmdStatus(args);
 else if (cmd === 'brief') cmdBrief(args);
 else if (cmd === 'attach') cmdAttach(args);
-else { console.error('命令：run | resume | open | stop | step | note | status（见 README.md）'); process.exit(2); }
+else { console.error('命令：run | resume | open | stop | mark | step | note | status（见 README.md）'); process.exit(2); }
