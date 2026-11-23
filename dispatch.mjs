@@ -155,11 +155,17 @@ function codexExtra(m) {
   for (const d of m.addDirs || []) extra.push('--add-dir', d);
   return extra;
 }
+// --path-add：把指定目录临时加到这个 Codex 进程的 PATH 最前面（例如 redapp 的 npm 安装目录）。
+function codexEnv(m) {
+  if (!m.pathAdd || !m.pathAdd.length) return undefined;
+  const key = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+  return { ...process.env, [key]: [...m.pathAdd, process.env[key] || ''].join(path.delimiter) };
+}
 const SPEC = {
   codex: {
     label: 'Codex',
-    start: (m, prompt) => ({ exe: process.execPath, args: [CODEX_JS, 'exec', '--json', '-s', m.sandbox, '--skip-git-repo-check', '-C', m.cwd, ...codexExtra(m), '-'], stdin: prompt }),
-    resume: (m, msg) => ({ exe: process.execPath, args: [CODEX_JS, 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode="${m.sandbox || 'workspace-write'}"`, ...codexExtra(m), m.convId, '-'], stdin: msg }),
+    start: (m, prompt) => ({ exe: process.execPath, args: [CODEX_JS, 'exec', '--json', '-s', m.sandbox, '--skip-git-repo-check', '-C', m.cwd, ...codexExtra(m), '-'], stdin: prompt, env: codexEnv(m) }),
+    resume: (m, msg) => ({ exe: process.execPath, args: [CODEX_JS, 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode="${m.sandbox || 'workspace-write'}"`, ...codexExtra(m), m.convId, '-'], stdin: msg, env: codexEnv(m) }),
     open: (m) => `& ${psQuote(CODEX_CMD)} resume ${m.convId}`,
   },
   agy: {
@@ -523,7 +529,7 @@ async function cmdRun(a) {
   const run = String(a.run || '');
   const agent = String(a.agent || '');
   if (!run || !SPEC[agent] || !a['prompt-file']) {
-    console.error('用法：node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly] [--network] [--add-dir 目录]');
+    console.error('用法：node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly] [--network] [--add-dir 目录] [--path-add 目录]');
     process.exit(2);
   }
   const name = String(a.name || agent);
@@ -542,6 +548,7 @@ async function cmdRun(a) {
   };
   if (agent === 'agy' && (a.browser || sites.length)) meta.browser = true;
   if (agent === 'codex' && a.network) meta.network = true;
+  if (agent === 'codex' && a['path-add']) meta.pathAdd = String(a['path-add']).split(',').map((d) => path.resolve(d.trim())).filter(Boolean);
   if (agent === 'codex' && a['add-dir']) meta.addDirs = String(a['add-dir']).split(',').map((d) => path.resolve(d.trim())).filter(Boolean);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
   fs.writeFileSync(path.join(dir, 'raw.log'), `# ${name} (${agent}) · ${now()}\n# cwd: ${meta.cwd}\n`);
