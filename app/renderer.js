@@ -13,6 +13,7 @@ const pref = (k, d) => { try { const v = localStorage.getItem(k); return v === n
 const savePref = (k, v) => { try { localStorage.setItem(k, v ? '1' : '0'); } catch {} };
 let cool = pref('cool', false);
 let soundOn = pref('sound', true);
+let typeSoundOn = pref('typesound', false); // 打字声，默认关
 const drafts = new Map();
 const toasts = new Map();
 const tiles = new Map();
@@ -109,13 +110,17 @@ const dotClass = (s) => ({ running: 'd-run', question: 'd-wait', blocked: 'd-blo
 function renderSidebar(runs) { window.consoleSidebar.render(runs); }
 function renderSummary(run) {
   const box = $('#summary');
-  if (!run || !run.agents.length) { box.innerHTML = ''; return; }
+  const html = summaryHtml(run);
+  if (box._html !== html) { box.innerHTML = html; box._html = html; } // 内容变了才重画
+}
+function summaryHtml(run) {
+  if (!run || !run.agents.length) return '';
   const n = run.agents.length;
   const running = run.agents.filter((a) => a.status === 'running').length;
   const waiting = run.agents.filter(needsYou).length;
   const done = run.agents.filter((a) => a.status === 'done').length;
   const tokens = run.agents.reduce((s, a) => s + (a.tokens || 0), 0);
-  box.innerHTML = `
+  return `
     <div class="sum-line"><b>${n} 个助手</b>${running ? ` · <span class="r">${running} 个运行中</span>` : ''}${waiting ? ` · <span class="w">${waiting} 个等你</span>` : ''}</div>
     <div class="sum-nums"><span>累计 ${tok(tokens)} token</span><span>${done} 个已完成</span></div>`;
 }
@@ -153,6 +158,7 @@ function renderHead(run) {
       <div class="switches">
         <button class="listen" data-listen="1" title="依次播放三种提示音：完成一项、卡住了、全部完成">试听</button>
         <label class="sw" title="完成、卡住、全部完成时播放提示音"><span>提示音</span><input type="checkbox" id="sound" ${soundOn ? 'checked' : ''}><span class="pill"><span class="knob"></span></span></label>
+        ${cool ? `<label class="sw" title="代码流逐字打出时播放很轻的键盘声"><span>打字声</span><input type="checkbox" id="typesound" ${typeSoundOn ? 'checked' : ''}><span class="pill"><span class="knob"></span></span></label>` : ''}
         <label class="sw" title="每个画面只留一行进展，下面滚动显示它真实在跑的命令和代码"><span>炫酷模式</span><input type="checkbox" id="cool" ${cool ? 'checked' : ''}><span class="pill"><span class="knob"></span></span></label>
       </div>
     </div>
@@ -224,29 +230,37 @@ function eventRow(ev, fresh) {
   return li;
 }
 
-// 代码流里的一行：按内容上色
-function codeLine(line, fresh) {
-  const div = document.createElement('div');
-  div.className = 'c-line' + (fresh ? ' new' : '');
+// 代码流里的一行：先判断它是什么（命令、输出、新增代码、出错……），决定颜色
+function classify(line) {
   const m = line.match(/^\[(\d\d:\d\d:\d\d)\]\s?([\s\S]*)$/);
   const ts = m ? m[1] : '';
   const rest = m ? m[2] : line;
-  let html;
   const who = rest.match(/^(codex|agy|claude|subagent):\s?([\s\S]*)$/);
-  if (who) html = `<span class="c-who">${esc(who[1])}:</span> <span class="c-say">${esc(who[2])}</span>`;
-  else {
-    let cls = '';
-    if (/^(PS>|>>|\$ )/.test(rest) || /^(\+\+\+|\*\*\*|---)\s/.test(rest)) cls = 'c-cmd';
-    else if (/^\+(?!\+)/.test(rest)) cls = 'c-add';
-    else if (/^\/\//.test(rest)) cls = 'c-think';
-    else if (/\[exit [1-9]|\berror\b|Error|FAIL|failed|Traceback|denied|拒绝/i.test(rest)) cls = 'c-err';
-    else if (/✔|✓|passing|\[exit 0\]|SUCCESS|result\.success|\bDONE\b/.test(rest)) cls = 'c-ok';
-    else if (/^<<|^#|^\s*"[\w]+":|turn\.|session\.|thread\.|system\./.test(rest)) cls = 'c-meta';
-    else if (/30[12] |Redirect|被阻碍|warn/i.test(rest)) cls = 'c-warn';
-    html = cls ? `<span class="${cls}">${esc(rest)}</span>` : esc(rest);
-    if (cls === 'c-add' || cls === 'c-err') div.className += ' ' + cls;
-  }
-  div.innerHTML = (ts ? `<span class="c-ts">[${ts}]</span> ` : '') + html;
+  if (who) return { ts, who: who[1], text: who[2], cls: 'c-say', lineCls: '' };
+  let cls = '';
+  if (/^(PS>|>>|\$ )/.test(rest) || /^(\+\+\+|\*\*\*|---)\s/.test(rest)) cls = 'c-cmd';
+  else if (/^\+(?!\+)/.test(rest)) cls = 'c-add';
+  else if (/^\/\//.test(rest)) cls = 'c-think';
+  else if (/\[exit [1-9]|\berror\b|Error|FAIL|failed|Traceback|denied|拒绝/i.test(rest)) cls = 'c-err';
+  else if (/✔|✓|passing|\[exit 0\]|SUCCESS|result\.success|\bDONE\b/.test(rest)) cls = 'c-ok';
+  else if (/^<<|^#|^\s*"[\w]+":|turn\.|session\.|thread\.|system\./.test(rest)) cls = 'c-meta';
+  else if (/30[12] |Redirect|被阻碍|warn/i.test(rest)) cls = 'c-warn';
+  return { ts, who: '', text: rest, cls, lineCls: cls === 'c-add' || cls === 'c-err' ? cls : '' };
+}
+// 一行的外壳：时间戳、说话人先放好，正文放进 .c-body（打字时逐字往里加）
+function codeShell(info) {
+  const div = document.createElement('div');
+  div.className = 'c-line' + (info.lineCls ? ' ' + info.lineCls : '');
+  div.innerHTML = (info.ts ? `<span class="c-ts">[${info.ts}]</span> ` : '')
+    + (info.who ? `<span class="c-who">${esc(info.who)}:</span> ` : '')
+    + `<span class="c-body ${info.cls}"></span>`;
+  return div;
+}
+// 完整的一行（不打字，直接显示）
+function codeLine(line) {
+  const info = classify(line);
+  const div = codeShell(info);
+  div.querySelector('.c-body').textContent = info.text;
   return div;
 }
 
@@ -255,27 +269,31 @@ function updateTile(run, a) {
   if (!el) { el = makeTile(a); tiles.set(a.name, el); $('#wall').appendChild(el); }
   const vendor = vendorOf(a);
   const [st, stText, hero, heroK] = look(a);
-  el.className = `tile v-${vendor} s-${st}${el.classList.contains('flash') ? ' flash' : ''}`;
+  const cls = `tile v-${vendor} s-${st}${el.classList.contains('flash') ? ' flash' : ''}`;
+  if (el.className !== cls) el.className = cls;
+  const setText = (sel, text) => { const n = $(sel, el); if (n.textContent !== text) n.textContent = text; };
   if (el._vendor !== vendor) { $('.mark', el).innerHTML = ICONS[vendor] || ''; el._vendor = vendor; }
-  $('.t-name', el).textContent = a.name;
-  $('.t-vendor', el).textContent = a.agent === 'claude-session' ? 'Claude 会话' : VENDOR[vendor] || vendor;
+  setText('.t-name', a.name);
+  setText('.t-vendor', a.agent === 'claude-session' ? 'Claude 会话' : VENDOR[vendor] || vendor);
   const elapsed = ((a.endedAt ? new Date(a.endedAt) : new Date()) - new Date(a.lastStartedAt || a.startedAt)) / 1000;
-  $('.t-meta', el).textContent = `${dur(elapsed)}  ${tok(a.tokens)} token`;
-  $('.t-spark', el).innerHTML = sparkSvg(activity(a), a.status === 'running');
+  setText('.t-meta', `${dur(elapsed)}  ${tok(a.tokens)} token`);
+  const series = activity(a);
+  const sparkSig = series.join(',') + (a.status === 'running');
+  if (el._spark !== sparkSig) { $('.t-spark', el).innerHTML = sparkSvg(series, a.status === 'running'); el._spark = sparkSig; }
   const last = lastActivity(a);
   const lastEl = $('.t-last', el);
-  lastEl.textContent = `最后动态：${ago(last)}`;
+  setText('.t-last', `最后动态：${ago(last)}`);
   const stale = a.status === 'running' && Date.now() - last > STALE_MS;
   lastEl.classList.toggle('stale', stale);
   a._stale = stale && dismissed.get(`${run.id}/${a.name}`) !== last;
   a._quiet = Date.now() - last;
-  $('.chip-text', el).textContent = stText;
+  setText('.chip-text', stText);
   const now = $('.now', el);
-  now.className = `now ${hero}`;
-  $('.now-k', now).textContent = heroK;
-  $('.now-text', now).textContent = plain(a.current || '');
-  $('.now-text', now).title = plain(a.current || '');
-  $('.t-task', el).textContent = a.task ? `任务：${a.task}` : '';
+  if (now.className !== `now ${hero}`) now.className = `now ${hero}`;
+  setText('.now-k', heroK);
+  const cur = plain(a.current || '');
+  if ($('.now-text', now).textContent !== cur) { $('.now-text', now).textContent = cur; $('.now-text', now).title = cur; }
+  setText('.t-task', a.task ? `任务：${a.task}` : '');
 
   // 大白话记录：只追加新的
   const log = $('.t-log', el);
@@ -293,20 +311,24 @@ function updateTile(run, a) {
   }
 
   // 代码流：用上次内容的末尾做锚点，找出新增部分，排进打字队列
-  const raw = a.raw || '';
+  // 只取到最后一个换行为止：流式输出时最后一行可能才写了一半，等它写完再打，否则一句话会被拆成两行
+  const rawAll = a.raw || '';
+  const raw = rawAll.slice(0, rawAll.lastIndexOf('\n') + 1);
   const size = a.rawSize || 0;
   const term = $('.t-term', el);
-  if (size < el._rawSize) { term.innerHTML = ''; el._rawPrev = ''; el._queue = []; }
+  if (size < el._rawSize) { term.innerHTML = ''; el._rawPrev = ''; el._queue = []; el._typing = null; }
   if (raw && raw !== el._rawPrev) {
     if (!el._rawPrev) {
       const frag = document.createDocumentFragment();
-      raw.split('\n').slice(-300).forEach((l) => frag.appendChild(codeLine(l, false)));
+      raw.replace(/\n$/, '').split('\n').slice(-300).forEach((l) => frag.appendChild(codeLine(l)));
       term.appendChild(frag);
+      if (!el._cursor) el._cursor = cursorEl();
+      if (term.lastElementChild) term.lastElementChild.appendChild(el._cursor); // 光标先停在最后一行末尾
       el._stickTerm = true;
     } else {
       const anchor = el._rawPrev.slice(-240);
       const idx = raw.lastIndexOf(anchor);
-      const fresh = (idx >= 0 ? raw.slice(idx + anchor.length) : raw).replace(/^\n/, '');
+      const fresh = (idx >= 0 ? raw.slice(idx + anchor.length) : raw).replace(/^\n/, '').replace(/\n$/, '');
       if (fresh) el._queue.push(...fresh.split('\n'));
     }
     el._rawPrev = raw;
@@ -394,8 +416,11 @@ function renderWall(run) {
   const names = new Set(run.agents.map((a) => a.name));
   for (const [n, el] of tiles) if (!names.has(n)) { el.remove(); tiles.delete(n); }
   run.agents.forEach((a) => updateTile(run, a));
-  run.agents.forEach((a) => wall.appendChild(tiles.get(a.name)));
-  layoutWall(run.agents.length);
+  // 只有顺序真的变了才重新排（把画面拿下来再放回去会让它闪一下，动画也会重来）
+  const want = run.agents.map((a) => tiles.get(a.name));
+  const have = [...wall.querySelectorAll(':scope > .tile')];
+  if (want.length !== have.length || want.some((el, i) => el !== have[i])) want.forEach((el) => wall.appendChild(el));
+  if (wall._n !== run.agents.length || wall._w !== wall.clientWidth) { layoutWall(run.agents.length); wall._n = run.agents.length; wall._w = wall.clientWidth; }
   requestAnimationFrame(() => {
     for (const el of tiles.values()) {
       const l = $('.t-log', el), t = $('.t-term', el);
@@ -405,19 +430,85 @@ function renderWall(run) {
   });
 }
 
-// 代码流打字机：每帧给每个画面吐出几行
+// ---------- 代码流打字机 ----------
+// 炫酷模式下逐字打出新内容，像黑客电影里那样；积压多时自动加速，保证显示最多落后一两秒。
+// 只影响代码流的显示方式：状态、提醒、提示音都不等它，照常立刻更新。
+const TYPE = {
+  base: 2,          // 平时每帧打几个字（约每秒 120 字，像很快的真人）
+  catchUpFrames: 75, // 积压时，争取在多少帧（约 1.25 秒）内追上
+  longLine: 140,    // 超过这么长的行，只逐字打开头一段，剩下的一下子刷出来
+  maxLines: 500,    // 每个画面最多保留多少行
+};
+const cursorEl = () => { const c = document.createElement('span'); c.className = 'c-cursor'; return c; };
+
+function finishTyping(el) {
+  const t = el._typing;
+  if (!t) return;
+  t.node.textContent = t.text;
+  t.div.classList.remove('typing');
+  el._typing = null;
+}
+function startLine(el, term, line) {
+  const info = classify(line);
+  const div = codeShell(info);
+  div.classList.add('typing');
+  const body = div.querySelector('.c-body');
+  const node = document.createTextNode('');
+  body.appendChild(node);
+  term.appendChild(div);
+  el._typing = { div, node, text: info.text, pos: 0 };
+  // 光标跟着正在打的这一行走
+  if (!el._cursor) el._cursor = cursorEl();
+  div.appendChild(el._cursor);
+}
+
 function pump() {
+  const animate = cool && !document.hidden; // 窗口最小化或不在炫酷模式时不做动画，直接显示
+  let typedThisFrame = 0;
   for (const el of tiles.values()) {
-    if (!el._queue.length) continue;
     const term = $('.t-term', el);
-    const n = cool ? Math.max(1, Math.ceil(el._queue.length / 40)) : el._queue.length;
-    const frag = document.createDocumentFragment();
-    el._queue.splice(0, n).forEach((l) => frag.appendChild(codeLine(l, cool)));
-    term.appendChild(frag);
-    while (term.childElementCount > 500) term.firstElementChild.remove();
+    if (!el._queue.length && !el._typing) continue;
+
+    if (!animate) {
+      // 不做动画：把正在打的那行打完，剩下的整行直接放进去
+      finishTyping(el);
+      if (el._queue.length) {
+        const frag = document.createDocumentFragment();
+        el._queue.splice(0).forEach((l) => frag.appendChild(codeLine(l)));
+        term.appendChild(frag);
+      }
+    } else {
+      // 积压越多打得越快：算出这一帧要打多少字
+      const backlog = (el._typing ? el._typing.text.length - el._typing.pos : 0) + el._queue.reduce((s, l) => s + l.length + 1, 0);
+      let budget = Math.max(TYPE.base, Math.ceil(backlog / TYPE.catchUpFrames));
+      // 积压特别多（一次几百行）时，先把多出来的整行直接刷出来，只留最后一小段逐字打
+      if (el._queue.length > 60) {
+        finishTyping(el);
+        const frag = document.createDocumentFragment();
+        el._queue.splice(0, el._queue.length - 20).forEach((l) => frag.appendChild(codeLine(l)));
+        term.appendChild(frag);
+      }
+      while (budget > 0) {
+        if (!el._typing) {
+          if (!el._queue.length) break;
+          startLine(el, term, el._queue.shift());
+        }
+        const t = el._typing;
+        // 很长的行：逐字打开头一段后，剩下的一次刷完
+        if (t.pos >= TYPE.longLine) { t.pos = t.text.length; }
+        const step = Math.min(budget, t.text.length - t.pos);
+        t.pos += step;
+        budget -= step;
+        typedThisFrame += step;
+        t.node.textContent = t.text.slice(0, t.pos);
+        if (t.pos >= t.text.length) { t.div.classList.remove('typing'); el._typing = null; budget -= 1; }
+      }
+    }
+    while (term.childElementCount > TYPE.maxLines) term.firstElementChild.remove();
     if (el._stickTerm) term.scrollTop = term.scrollHeight;
     else if (cool) $('.t-jump', el).hidden = false;
   }
+  if (typedThisFrame && typeSoundOn && window.consoleSound.key) window.consoleSound.key(typedThisFrame);
   requestAnimationFrame(pump);
 }
 
@@ -425,8 +516,12 @@ function pump() {
 function renderChat(run) {
   const box = $('#drawer');
   const a = run && chatWith ? run.agents.find((x) => x.name === chatWith) : null;
-  if (!a) { box.innerHTML = ''; box.classList.remove('open'); return; }
+  if (!a) { if (box._sig) { box.innerHTML = ''; box.classList.remove('open'); box._sig = ''; } return; }
   if (box.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA') return;
+  // 内容没变就不重画，避免聊天窗口一闪一闪
+  const chatSig = JSON.stringify([run.id, a.name, a.events.length, a.status, a.options, a.agent]);
+  if (box._sig === chatSig) return;
+  box._sig = chatSig;
   const key = `chat:${run.id}/${a.name}`;
   const old = $('.c-log', box);
   const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
@@ -461,18 +556,26 @@ function renderChat(run) {
 
 // ---------- 刷新 ----------
 let lastSide = '', lastHead = '', busy = false;
+const knownRuns = new Set(); // 已经见过的任务，用来判断「新出现的任务」
+let knownRunsReady = false;
 async function tick() {
   if (busy) return;
   busy = true;
   try {
     const runs = await api.listRuns();
-    if (followLatest && runs.length) selected = runs[0].id;
+    // 自动跟随：只在出现新任务时跳过去。已有任务轮流更新时不切换，否则整面墙会来回重建、一闪一闪
+    const fresh = runs.filter((r) => !knownRuns.has(r.id));
+    runs.forEach((r) => knownRuns.add(r.id));
+    if (!selected && runs.length) selected = runs[0].id;
+    else if (followLatest && fresh.length && knownRunsReady) selected = fresh[0].id;
+    knownRunsReady = true;
     if (selected && !runs.find((r) => r.id === selected)) selected = runs[0] ? runs[0].id : null;
     const run = selected ? await api.getRun(selected) : null;
     if (run && currentRun && run.id !== currentRun.id) { for (const el of tiles.values()) el.remove(); tiles.clear(); }
     currentRun = run;
     renderSidebar(runs); // 自己判断有没有变化，拖动或改名时不会重画
-    const headSig = JSON.stringify([run && run.plan, run && run.notes.length, run && run.agents.map((a) => [a.status, a.warnings, a.handover, a.current]), notesOpen, cool, soundOn]);
+    // 顶部只跟状态、提醒有关；「现在在做什么」变了不用重画顶部
+    const headSig = JSON.stringify([run && run.plan, run && run.notes.length, run && run.agents.map((a) => [a.name, a.status, a.warnings, a.handover, a.status === 'blocked' ? blockedReason(a) : '', a.warnings ? (a.events.filter((e) => e.type === 'warn').pop() || {}).text : '']), notesOpen, cool, soundOn, typeSoundOn]);
     if (headSig !== lastHead) { renderHead(run); lastHead = headSig; }
     renderSummary(run);
     renderWall(run);
@@ -508,6 +611,7 @@ document.addEventListener('input', (e) => { if (e.target.matches('[data-draft]')
 document.addEventListener('change', (e) => {
   if (e.target.id === 'cool') { cool = e.target.checked; savePref('cool', cool); applyCool(); }
   if (e.target.id === 'sound') { soundOn = e.target.checked; savePref('sound', soundOn); if (soundOn) window.consoleSound.play('done'); }
+  if (e.target.id === 'typesound') { typeSoundOn = e.target.checked; savePref('typesound', typeSoundOn); if (typeSoundOn) window.consoleSound.key(6); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
@@ -563,7 +667,7 @@ document.addEventListener('click', async (e) => {
     const el = tiles.get(b.dataset.wait); if (el) el._sig = '';
     return tick();
   }
-  if ((b = t('[data-chat]'))) { chatWith = b.dataset.chat; return tick(); }
+  if ((b = t('[data-chat]'))) { chatWith = b.dataset.chat; $('#drawer')._sig = ''; return tick(); }
   if (t('[data-chat-close]')) { chatWith = null; return tick(); }
   if ((b = t('[data-link]'))) {
     const err = await api.openLink(selected, b.dataset.link);

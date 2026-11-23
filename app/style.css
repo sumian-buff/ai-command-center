@@ -328,8 +328,9 @@ body.cool .t-task { display: none; }
 .t-body { flex: 1; min-height: 0; position: relative; display: flex; }
 .t-log { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 4px 14px 10px; display: flex; flex-direction: column; gap: 3px; }
 .ev { display: grid; grid-template-columns: 52px 12px 1fr; gap: 6px; align-items: baseline; padding: 3px 6px; border-radius: 5px; font-size: 12.5px; line-height: 1.48; }
-.ev.new { animation: slideIn .55s cubic-bezier(.22, 1, .36, 1) both; }
-@keyframes slideIn { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: none; } }
+/* 新动态：轻轻往上滑一点，不从全透明开始，避免闪烁 */
+.ev.new { animation: slideIn .4s cubic-bezier(.22, 1, .36, 1) both; }
+@keyframes slideIn { 0% { opacity: .35; transform: translateY(5px); } 100% { opacity: 1; transform: none; } }
 .ev time { font: 11px var(--font-mono); color: var(--ink-muted); }
 .ev i { font-style: normal; font-size: 11px; text-align: center; line-height: 1; color: var(--v-color); }
 .ev p { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--ink-sub); }
@@ -353,7 +354,7 @@ body.cool .t-task { display: none; }
 body.cool .t-log { display: none; }
 body.cool .t-term { display: block; flex: 1; min-height: 0; overflow-y: auto; background: var(--code-bg); padding: 9px 13px 14px; font: 11.8px/1.56 var(--font-mono); color: #CBD5E1; }
 .c-line { white-space: pre-wrap; word-break: break-all; padding: .5px 0; }
-.c-line.new { animation: slideIn .45s cubic-bezier(.22, 1, .36, 1) both; }
+/* 代码流不做逐行淡入：一次涌进很多行时会满屏闪烁，逐行打出来本身就有滚动感 */
 .c-ts { color: var(--code-ts); }
 .c-cmd { color: var(--code-cmd); font-weight: 700; }
 .c-ok { color: var(--code-ok); }
@@ -364,8 +365,20 @@ body.cool .t-term { display: block; flex: 1; min-height: 0; overflow-y: auto; ba
 .c-err { color: var(--code-err); font-weight: 700; background: rgba(244, 63, 94, .1); padding: 1px 4px; border-left: 2px solid var(--st-block); }
 .c-say { color: var(--ink-main); }
 .c-who { color: var(--v-color); font-weight: 700; }
-.s-running .t-term::after { content: ""; display: inline-block; width: 7px; height: 13px; background: var(--st-run); vertical-align: -2px; margin-left: 4px; animation: cursor 1s steps(1) infinite; }
+/* 打字光标：发光的方块，跟着正在打的位置走；助手停下后不再显示 */
+.c-cursor { display: none; }
+body.cool .s-running .c-cursor { display: inline-block; width: .6em; height: 1.05em; margin-left: 1px; vertical-align: -.18em; background: var(--v-color); box-shadow: 0 0 6px var(--v-color), 0 0 14px color-mix(in srgb, var(--v-color) 45%, transparent); animation: cursor 1s steps(1) infinite; }
+body.cool .s-running .c-line.typing .c-cursor { animation: none; } /* 正在打字时常亮，停下来才闪 */
 @keyframes cursor { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+/* 正在打的那一行像荧光屏一样更亮，打完后慢慢暗下来 */
+body.cool .c-line { transition: text-shadow .9s ease-out, filter .9s ease-out; }
+body.cool .c-line.typing { filter: brightness(1.35); text-shadow: 0 0 7px color-mix(in srgb, var(--v-color) 70%, transparent); }
+/* 很淡的扫描线纹理（静态背景，不占资源）和四周微暗，像老式显示器 */
+body.cool .t-term {
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .018) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at center, transparent 60%, rgba(0, 0, 0, .35) 100%);
+}
 
 .t-jump { position: absolute; right: 14px; bottom: 10px; border: 1px solid var(--line-outer); background: var(--card-bg); border-radius: 99px; padding: 3px 10px; font-size: 11.5px; font-weight: 700; color: var(--ink-sub); cursor: pointer; z-index: 2; }
 

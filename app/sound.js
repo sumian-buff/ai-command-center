@@ -47,7 +47,38 @@
     },
   };
 
+  // 打字声：很轻、很短的「哒」，音高略有随机，像机械键盘。每秒最多十几下，不会连成噪音
+  let keyAcc = 0, lastKey = 0;
+  function keyClick() {
+    const c = audio();
+    const t0 = c.currentTime;
+    const osc = c.createOscillator();
+    const filt = c.createBiquadFilter();
+    const g = c.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1600 + Math.random() * 900, t0);
+    filt.type = 'bandpass';
+    filt.frequency.setValueAtTime(2400 + Math.random() * 800, t0);
+    filt.Q.value = 1.2;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.035, t0 + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.028);
+    osc.connect(filt).connect(g).connect(c.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.04);
+  }
+
   window.consoleSound = {
     play(name) { try { (SOUNDS[name] || SOUNDS.done)(); } catch {} },
+    // 打出了 n 个字：大约每 3 个字响一下，两下之间至少隔 60 毫秒
+    key(n) {
+      keyAcc = Math.min(keyAcc + n, 12);
+      const now = performance.now();
+      if (keyAcc >= 3 && now - lastKey > 60) {
+        keyAcc -= 3;
+        lastKey = now;
+        try { keyClick(); } catch {}
+      }
+    },
   };
 })();
