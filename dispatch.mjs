@@ -9,6 +9,7 @@
 //   node dispatch.mjs open   --run <任务ID> --name <显示名>      打开它自己的对话窗口
 //   node dispatch.mjs stop   --run <任务ID> --name <显示名>
 //   node dispatch.mjs mark   --run <任务ID> --name <显示名> [--text <说明>]
+//   node dispatch.mjs fold   --run <任务ID> --name <显示名> [--undo]   收起/放回用完的卡片
 //   node dispatch.mjs step   --run <任务ID> --n <步骤号> --status todo|doing|done|blocked
 //   node dispatch.mjs note   --run <任务ID> --text <Claude 的说明>
 //   node dispatch.mjs status [--run <任务ID>]                    给 Claude 看的进度汇总
@@ -21,6 +22,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { createAgyChildren, stopAgyChildren } from './agy-children.mjs';
 import { alive, markAgentDone } from './mark-done.cjs';
+import { foldedNames, setFolded } from './fold.cjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const RUNS = path.join(ROOT, 'runs');
@@ -94,6 +96,8 @@ function buildPrompt(agent, userPrompt, sites) {
     lines.push('7. 只能创建和编辑文件，不要运行任何终端命令，也不要使用 git。');
     lines.push('8. 需要浏览网页时，用浏览器子代理操作用户自己的 Chrome。如果网站要求登录或登录已过期：用浏览器打开该网站的登录页面并停在那里，然后以「被阻碍：」开头说明「已在你的 Chrome 里打开了某某网站的登录页，请登录后让我继续」，然后结束。不要尝试替用户输入账号密码，不要绕过登录。');
     lines.push('9. 在网站上只做浏览和阅读，不要点赞、收藏、关注、评论、发帖、私信或购买。');
+    // 每次新连接 Chrome，Chrome 都会弹「允许远程调试」窗口（Chrome 的安全设计，关不掉），所以要少连、别反复重连
+    lines.push('10. 每连接一次 Chrome，用户都要在 Chrome 弹窗里点一次「允许」，所以要尽量少连接：整个任务尽量只派一个浏览器子代理，后续步骤用 send_message 继续给同一个子代理下指令，不要每一步都新开子代理。不要在网页里运行脚本（evaluate_script 在无人值守模式下会被拒绝，子代理会因此失败），用页面快照、点击、填写、上传文件这类普通操作代替。连不上 Chrome 或连接超时时不要反复重试：以「被阻碍：」开头说明「请看一下 Chrome 有没有弹出允许远程调试的窗口，点允许后让我继续」，然后结束。');
   }
   if (agent === 'codex') lines.push('7. 不要执行 git commit / git push，提交由 Claude 负责。');
   if (agent === 'claude') lines.push('7. 你是被派出来干活的助手：自己完成任务，不要再把活派给其他 agent，不要使用 AI指挥台的 dispatch.mjs，不要执行 git commit / git push。');
@@ -553,10 +557,12 @@ async function cmdResume(a) {
   msg = msg.trim() || '我已经处理好了，请从刚才中断的地方继续完成原来的任务。';
   appendLine(path.join(dir, 'events.jsonl'), { ts: now(), type: 'user', text: `你回复：${msg}` });
   // 提醒它沿用原来的工作规则
-  const wrapped = msg + '\n\n（请继续遵守最开始的工作规则：每个阶段用一句中文说明；遇到阻碍以「被阻碍：」开头说明；需要选择时写「需要你选择：」并列出编号选项；最后总结。）';
+  let wrapped = msg + '\n\n（请继续遵守最开始的工作规则：每个阶段用一句中文说明；遇到阻碍以「被阻碍：」开头说明；需要选择时写「需要你选择：」并列出编号选项；最后总结。）';
+  if (meta.agent === 'agy' && (meta.browser || a.browser)) wrapped += '\n（用浏览器时：每连接一次 Chrome 用户都要点一次「允许」，尽量沿用同一个浏览器子代理、用 send_message 继续下指令；不要在网页里运行脚本；连不上 Chrome 时不要反复重试，以「被阻碍：」开头请用户在 Chrome 弹窗里点允许。）';
   // 先占住「进行中」，避免启用浏览器那一分钟里，用户在指挥台又点一次继续
   fs.rmSync(path.join(dir, 'stop.flag'), { force: true });
   Object.assign(meta, { status: 'running', pid: process.pid, childPid: null, current: '正在接着干活…', options: [] });
+  delete meta.hidden; // 旧卡片接着干活了，重新回到监控墙上
   if (meta.agent === 'agy' && a.browser) meta.browser = true;
   writeJSON(path.join(dir, 'meta.json'), meta);
   const status = await dispatchTurn(run, meta, wrapped, true);
@@ -668,6 +674,15 @@ function cmdMark(a) {
     process.exitCode = 2;
   }
 }
+function cmdFold(a) {
+  try {
+    setFolded(RUNS, String(a.run), String(a.name), !a.undo);
+    console.log(a.undo ? `「${a.name}」已放回监控墙。` : `「${a.name}」已收起。`);
+  } catch (e) {
+    console.error(e.message);
+    process.exitCode = 2;
+  }
+}
 function cmdStep(a) {
   const f = path.join(RUNS, String(a.run), 'plan.json');
   const plan = readJSON(f, null);
@@ -689,9 +704,15 @@ function cmdStatus(a) {
     console.log(`\n== ${r}  ${plan.title || ''}`);
     let names = [];
     try { names = fs.readdirSync(path.join(RUNS, r, 'agents')); } catch {}
+    // 旧一轮用完、已收起的卡片只列名字，省得刷屏
+    const metas = names.map((n) => readJSON(path.join(agentDir(r, n), 'meta.json'), null)).filter(Boolean)
+      .map((m) => (m.status === 'running' && m.agent !== 'claude-session' && !alive(m.pid) ? { ...m, status: 'interrupted' } : m));
+    const folded = foldedNames(metas);
+    if (folded.size) console.log(`（已收起：${[...folded].join('、')}）`);
     for (const n of names) {
       const m = readJSON(path.join(agentDir(r, n), 'meta.json'), null);
       if (!m) continue;
+      if (folded.has(m.parent || n)) continue;
       if (m.agent === 'claude-session' && m.status !== 'done') { console.log(`- ${n}（Claude 侧边栏会话 ${m.sessionId}）进度请用 list_sessions / 打开会话查看`); continue; }
       const st = m.status === 'running' && !alive(m.pid) ? '已中断' : NAMES[m.status] || m.status;
       const evs = fs.existsSync(path.join(agentDir(r, n), 'events.jsonl'))
@@ -713,9 +734,10 @@ else if (cmd === 'resume') await cmdResume(args);
 else if (cmd === 'open') cmdOpen(args);
 else if (cmd === 'stop') cmdStop(args);
 else if (cmd === 'mark') cmdMark(args);
+else if (cmd === 'fold') cmdFold(args);
 else if (cmd === 'step') cmdStep(args);
 else if (cmd === 'note') cmdNote(args);
 else if (cmd === 'status') cmdStatus(args);
 else if (cmd === 'brief') cmdBrief(args);
 else if (cmd === 'attach') cmdAttach(args);
-else { console.error('命令：run | resume | open | stop | mark | step | note | status（见 README.md）'); process.exit(2); }
+else { console.error('命令：run | resume | open | stop | mark | fold | step | note | status（见 README.md）'); process.exit(2); }

@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, Notification, shell } = require('electron')
 const { readSession } = require('./transcript');
 const { diagnose, includeChildActivity } = require('./diagnose');
 const { markAgentDone } = require('../mark-done.cjs');
+const { foldedNames, setFolded } = require('../fold.cjs');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
@@ -76,11 +77,15 @@ function loadAgents(runDir) {
 
 function loadRun(id) {
   const dir = path.join(RUNS, id);
+  const agents = loadAgents(dir);
+  // 旧一轮用完的卡片收起来（规则见 fold.cjs）
+  const folded = foldedNames(agents);
+  for (const a of agents) a.folded = folded.has(a.parent || a.name);
   return {
     id,
     plan: readJSON(path.join(dir, 'plan.json'), null),
     notes: readLines(path.join(dir, 'notes.jsonl')),
-    agents: loadAgents(dir),
+    agents,
   };
 }
 
@@ -269,6 +274,10 @@ app.whenReady().then(() => {
   ipcMain.handle('agent:stop', (_e, { run, name }) => stopAgent(run, name));
   ipcMain.handle('agent:mark-done', (_e, { run, name }) => {
     try { markAgentDone(RUNS, run, name); return ''; }
+    catch (err) { return err.message; }
+  });
+  ipcMain.handle('agent:fold', (_e, { run, name, hidden }) => {
+    try { setFolded(RUNS, run, name, hidden); return ''; }
     catch (err) { return err.message; }
   });
   ipcMain.handle('agent:reply', (_e, { run, name, text }) => replyAgent(run, name, text));

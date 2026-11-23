@@ -37,7 +37,7 @@ function sandbox(t) {
   const agents = path.join(work, 'runs', 'case', 'agents')
   const home = path.join(work, 'home')
   fs.mkdirSync(home)
-  for (const f of fs.readdirSync(repo).filter(f => f.endsWith('.mjs') || f === 'mark-done.cjs')) {
+  for (const f of fs.readdirSync(repo).filter(f => f.endsWith('.mjs') || f.endsWith('.cjs'))) {
     fs.copyFileSync(path.join(repo, f), path.join(work, f))
   }
   fs.writeFileSync(path.join(work, 'prompt.txt'), prompt)

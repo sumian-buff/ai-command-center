@@ -407,6 +407,7 @@ function updateTile(run, a, children) {
   if (acts._sig !== actSig) { acts.innerHTML = renderActions(a); acts._sig = actSig; }
 }
 
+const FOLDABLE = ['done', 'stopped', 'failed', 'interrupted']; // 和 fold.cjs 保持一致
 function renderActions(a) {
   const b = [];
   if (a.agent === 'claude-session') b.push(`<button class="mini" data-link="${esc(a.name)}">在 Claude 里打开</button>`);
@@ -416,6 +417,7 @@ function renderActions(a) {
     if (a.agent === 'codex' && a.convId && a.status !== 'running') b.push(`<button class="mini" data-open="${esc(a.name)}">在 Codex 里打开</button>`);
     if (a.status === 'running') b.push(`<button class="mini danger" data-stop="${esc(a.name)}">停止</button>`);
   }
+  if (FOLDABLE.includes(a.status)) b.push(`<button class="mini" data-fold="${esc(a.name)}" title="用完了就收到墙下面，随时能放回来">收起</button>`);
   return b.join('');
 }
 
@@ -461,6 +463,7 @@ function renderWait(run, a) {
 
 function renderWall(run) {
   const wall = $('#wall');
+  renderFolded(run);
   if (!run) {
     for (const el of tiles.values()) el.remove();
     tiles.clear();
@@ -474,9 +477,18 @@ function renderWall(run) {
     wall.innerHTML = '<div class="empty"><b>还没有派出助手</b><span>Claude 正在规划，派出助手后这里会出现它们的画面。</span></div>';
     return;
   }
+  const parents = run.agents.filter((a) => !a.parent && !a.folded);
+  if (!parents.length) {
+    for (const el of tiles.values()) el.remove();
+    tiles.clear(); wall._n = 0;
+    if (!$('.empty.all-folded', wall)) {
+      wall.innerHTML = '<div class="empty all-folded"><b>卡片都收起来了</b><span>点下方的名字，可以把卡片放回墙上。</span></div>';
+      wall.style.gridTemplateColumns = ''; wall.style.gridTemplateRows = '';
+    }
+    return;
+  }
   const emptyBox = $('.empty', wall);
   if (emptyBox) emptyBox.remove();
-  const parents = run.agents.filter((a) => !a.parent);
   const families = new Map(parents.map((a) => [a.name, []]));
   for (const child of run.agents) families.get(child.parent)?.push(child);
   const names = new Set(families.keys());
@@ -494,6 +506,20 @@ function renderWall(run) {
       if (el._stickTerm && t.clientHeight) t.scrollTop = t.scrollHeight;
     }
   });
+}
+
+// 墙下面一条：旧一轮用完、已收起的卡片。点名字放回墙上
+function renderFolded(run) {
+  const bar = $('#folded');
+  const list = run ? run.agents.filter((a) => !a.parent && a.folded) : [];
+  const sig = JSON.stringify(list.map((a) => [a.name, a.status, a.agent]));
+  if (bar._sig === sig) return;
+  bar._sig = sig;
+  bar.hidden = !list.length;
+  if (!list.length) { bar.innerHTML = ''; return; }
+  bar.innerHTML = `<span class="f-label">已收起 ${list.length} 张用完的卡片</span>`
+    + list.map((a) => `<button class="f-chip v-${vendorOf(a)}" data-unfold="${esc(a.name)}" title="放回墙上"><i></i>${esc(a.name)}<em>${esc(look(a)[1])}</em></button>`).join('')
+    + '<span class="f-tip">点名字放回墙上</span>';
 }
 
 // ---------- 代码流打字机 ----------
@@ -762,6 +788,14 @@ document.addEventListener('click', async (e) => {
     diags.delete(key);
     if (a) dismissed.set(key, lastActivity(a));
     const el = tiles.get(b.dataset.wait); if (el) el._sig = '';
+    return tick();
+  }
+  if ((b = t('[data-fold]')) || (b = t('[data-unfold]'))) {
+    const hide = !!b.dataset.fold;
+    const name = hide ? b.dataset.fold : b.dataset.unfold;
+    if (hide && chatWith === name) chatWith = null;
+    const err = await api.foldAgent(currentRun.id, name, hide);
+    if (err) alert(err);
     return tick();
   }
   if ((b = t('[data-chat]'))) { chatWith = b.dataset.chat; $('#drawer')._sig = ''; return tick(); }

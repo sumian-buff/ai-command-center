@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('console2', {
   getRun: (id) => ipcRenderer.invoke('run:get', id),
   stopAgent: (run, name) => ipcRenderer.invoke('agent:stop', { run, name }),
   markAgentDone: (run, name) => ipcRenderer.invoke('agent:mark-done', { run, name }),
+  foldAgent: (run, name, hidden) => ipcRenderer.invoke('agent:fold', { run, name, hidden }),
   replyAgent: (run, name, text) => ipcRenderer.invoke('agent:reply', { run, name, text }),
   openAgent: (run, name, terminal) => ipcRenderer.invoke('agent:open', { run, name, terminal }),
   openLink: (run, name) => ipcRenderer.invoke('agent:link', { run, name }),

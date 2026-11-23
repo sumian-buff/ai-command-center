@@ -140,6 +140,8 @@ Claude 需要知道"派活要通过指挥台"。把 [`docs/CLAUDE.example.md`](d
 
 **agy 子助手**会出现在主助手画面内，显示名字、状态和最近的动作。点开子助手可以翻看它自己的动态。多个子助手用编号区分，在画面内滚动。子助手有新记录时，主助手的「最后动态」也会更新。点主助手的「停止」，会结束 agy 的整个进程树，仍在工作的子助手也会标为已停止。
 
+**多轮打磨时的旧卡片**：同一个任务里，一张卡片做完后，只要又派出了新的助手（新的一轮开始了），旧卡片就会自动收到墙下面的一条里，只留名字和状态，墙上只剩这一轮在干活的。几个助手并行时，先做完的不会被收起，要等下一轮开始才收。被阻碍、等你选择、还在运行的卡片永远不会自动收起。点墙下面的名字可以把卡片放回墙上；想提前收起某张已结束的卡片，鼠标移到它上面点「收起」。旧卡片如果又被叫回来接着干活，会自动回到墙上。
+
 **提示音**：右上角开关，点「试听」可以依次听到三种声音。声音是程序现场合成的，不需要音频文件。
 
 视觉设计由 Antigravity 出方案、Claude 审阅后实现，两轮方案的样板页和截图在 [`design/`](design/) 文件夹里。
@@ -204,7 +206,7 @@ Claude 需要知道"派活要通过指挥台"。把 [`docs/CLAUDE.example.md`](d
 agy 的浏览器功能是通过 Chrome 的远程调试连接**你平时用的 Chrome**，所以能用你已经登录的网站。
 
 1. 打开 Chrome，地址栏输入 `chrome://inspect/#remote-debugging`，打开远程调试开关
-2. 第一次被连接时 Chrome 可能弹窗询问，点允许
+2. agy 每次连接 Chrome，Chrome 都会弹窗问「是否允许远程调试」，点允许。这是 Chrome 的安全设计，防止别的程序偷偷控制你的浏览器，**没有办法关掉，也不建议绕过**。调度器已经要求 agy 尽量少连接：一个任务只开一个浏览器子助手、不在网页里运行脚本（这类操作会被拒绝，导致它反复重连）、连不上时直接停下来叫你，而不是一遍遍重试
 3. 让 agy 做网页任务时，**Chrome 要开着**
 
 > ⚠️ **风险提醒**：远程调试开着的时候，你电脑上的**任何程序**都能控制你的 Chrome，包括你登录着的所有网站。建议只在需要时打开，用完关掉。
@@ -231,6 +233,7 @@ node dispatch.mjs resume --run <任务ID> --name <名字> (--text <话> | --mess
 node dispatch.mjs open   --run <任务ID> --name <名字> [--terminal]
 node dispatch.mjs stop   --run <任务ID> --name <名字>
 node dispatch.mjs mark   --run <任务ID> --name <名字> [--text <完成说明>]
+node dispatch.mjs fold   --run <任务ID> --name <名字> [--undo]   # 收起 / 放回已结束的卡片
 
 # 计划步骤和 Claude 的说明
 node dispatch.mjs step --run <任务ID> --n <步骤号> --status todo|doing|done|blocked
@@ -279,6 +282,7 @@ agy.exe --mode accept-edits --input-format stream-json --output-format stream-js
 ai指挥台/
 ├── dispatch.mjs            调度器：启动助手、翻译事件、检查跑偏、接着对话继续
 ├── agy-children.mjs        辨认 agy 派出的子助手、跟踪记录和回报
+├── fold.cjs                多轮打磨时自动收起旧一轮的卡片
 ├── app/
 │   ├── main.js             窗口主程序：读取记录、系统通知、停止 / 打开等操作
 │   ├── renderer.js         界面：监控墙、聊天窗口、炫酷模式
