@@ -153,6 +153,9 @@ function codexExtra(m) {
   const extra = [];
   if (m.network) extra.push('-c', 'sandbox_workspace_write.network_access=true');
   for (const d of m.addDirs || []) extra.push('--add-dir', d);
+  // --approve-for-me（只用于上架类任务）：允许请求出沙箱，先按 ~/.codex/rules 判定，规则未覆盖的交给 Codex 自动审核。
+  // 用 -c 配置而不是 codex 的同名参数，因为 exec resume 不支持该参数，而 -c 对新建和继续都生效。
+  if (m.approveForMe) extra.push('-c', 'approval_policy="on-request"', '-c', 'approvals_reviewer="auto_review"');
   return extra;
 }
 // --path-add：把指定目录临时加到这个 Codex 进程的 PATH 最前面（例如 redapp 的 npm 安装目录）。
@@ -529,7 +532,7 @@ async function cmdRun(a) {
   const run = String(a.run || '');
   const agent = String(a.agent || '');
   if (!run || !SPEC[agent] || !a['prompt-file']) {
-    console.error('用法：node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly] [--network] [--add-dir 目录] [--path-add 目录]');
+    console.error('用法：node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly] [--network] [--add-dir 目录] [--path-add 目录] [--approve-for-me]');
     process.exit(2);
   }
   const name = String(a.name || agent);
@@ -548,6 +551,10 @@ async function cmdRun(a) {
   };
   if (agent === 'agy' && (a.browser || sites.length)) meta.browser = true;
   if (agent === 'codex' && a.network) meta.network = true;
+  if (agent === 'codex' && a['approve-for-me']) {
+    if (a.readonly) { console.error('--approve-for-me 不能与 --readonly 同时使用。'); process.exit(2); }
+    meta.approveForMe = true;
+  }
   if (agent === 'codex' && a['path-add']) meta.pathAdd = String(a['path-add']).split(',').map((d) => path.resolve(d.trim())).filter(Boolean);
   if (agent === 'codex' && a['add-dir']) meta.addDirs = String(a['add-dir']).split(',').map((d) => path.resolve(d.trim())).filter(Boolean);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
