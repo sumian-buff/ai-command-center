@@ -52,10 +52,28 @@ $procs = foreach ($p in $all) { if ($tree -contains $p.ProcessId -and $p.Process
 const shortCmd = (c) => { c = String(c || '').replace(/\s+/g, ' ').trim(); return c.length > 90 ? c.slice(0, 90) + '…' : c; };
 const mins = (s) => (s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`);
 
+// 子助手和主助手共用 agy 进程。即使主助手没有输出，子助手记录仍可能在追加。
+function includeChildActivity(agents) {
+  const byName = new Map(agents.map((a) => [a.name, a]));
+  for (const child of agents) {
+    if (child.agent !== 'agy' || !child.parent) continue;
+    const parent = byName.get(child.parent);
+    if (!parent || parent.agent !== 'agy') continue;
+    const lastEvent = child.events?.at(-1);
+    const last = Math.max(Date.parse(child.lastActivityAt) || 0, Date.parse(lastEvent?.ts) || 0, child.rawMtime || 0);
+    parent.childActivityMs = Math.max(parent.childActivityMs || 0, last);
+    if (child.status === 'running') parent.runningChildActivityMs = Math.max(parent.runningChildActivityMs || 0, last);
+  }
+  return agents;
+}
+
 // 根据检查结果，给出大白话结论和建议操作
 async function diagnose(meta, lastActivityMs) {
   const quiet = Math.round((Date.now() - lastActivityMs) / 1000);
   if (!meta.childPid) return { verdict: 'gone', title: '找不到它的程序', detail: '记录里没有它的程序编号，可能是很早以前启动的。', actions: ['restart'] };
+  if (meta.status === 'running' && meta.runningChildActivityMs && Date.now() - meta.runningChildActivityMs < 300000) {
+    return { verdict: 'busy', title: '子助手正在工作', detail: `主助手正在等子助手回报，子助手在 ${mins(Math.max(0, Math.round((Date.now() - meta.runningChildActivityMs) / 1000)))}前还有新记录。`, actions: ['wait'] };
+  }
   const info = await inspect(meta.childPid);
   if (!info) return { verdict: 'unknown', title: '没能检查成功', detail: '读取电脑上的程序信息失败，可以稍后再试。', actions: ['wait'] };
   if (!info.alive) return { verdict: 'gone', title: '它的程序已经退出了', detail: `程序已经不在运行，但没有留下结果（已经 ${mins(quiet)} 没有动静）。`, actions: ['restart'] };
@@ -98,4 +116,4 @@ async function diagnose(meta, lastActivityMs) {
   return { verdict: 'stuck', title: '它可能卡住了', detail: `程序还在，但已经 ${mins(quiet)} 没有动静，电脑没在为它干活，也没有发现它在和 AI 服务器通信。${quiet < 600 ? '如果它刚开始处理比较复杂的改动，也可能只是在思考，可以再等几分钟后重新检查；' : ''}确定卡住的话，可以重启它，让它从中断的地方接着做。`, actions: quiet < 600 ? ['wait', 'restart'] : ['restart', 'wait'] };
 }
 
-module.exports = { diagnose };
+module.exports = { diagnose, includeChildActivity };

@@ -68,18 +68,20 @@ function look(a) {
 const needsYou = (a) => a.status === 'blocked' || a.status === 'question';
 const lastActivity = (a) => {
   const ev = a.events && a.events.length ? new Date(a.events[a.events.length - 1].ts).getTime() : 0;
-  return Math.max(ev || 0, a.rawMtime || 0, new Date(a.startedAt).getTime() || 0);
+  return Math.max(ev || 0, a.rawMtime || 0, a.childActivityMs || 0, new Date(a.lastStartedAt || a.startedAt).getTime() || 0);
 };
 
 // 活跃度：最近 5 分钟、每 15 秒一格的动作数
-function activity(a) {
+function activity(agents) {
   const now = Date.now();
   const buckets = new Array(20).fill(0);
-  for (const ev of a.events || []) {
-    if (ev.type === 'user') continue;
-    const age = now - new Date(ev.ts).getTime();
-    if (age < 0 || age >= 300000) continue;
-    buckets[19 - Math.floor(age / 15000)]++;
+  for (const agent of agents) {
+    for (const ev of agent.events || []) {
+      if (ev.type === 'user') continue;
+      const age = now - new Date(ev.ts).getTime();
+      if (age < 0 || age >= 300000) continue;
+      buckets[19 - Math.floor(age / 15000)]++;
+    }
   }
   return buckets;
 }
@@ -131,7 +133,7 @@ function renderHead(run) {
   if (!run) { head.innerHTML = ''; return; }
   const plan = run.plan || {};
   const steps = (Array.isArray(plan.steps) ? plan.steps : []).map((s, i) => {
-    const owners = run.agents.filter((a) => a.step === i + 1);
+    const owners = run.agents.filter((a) => !a.parent && a.step === i + 1);
     let st = s.status || 'todo';
     if (owners.length) {
       st = owners.some((a) => a.status === 'running') ? 'doing'
@@ -206,6 +208,7 @@ function makeTile(a) {
     <div class="now"><span class="now-k"></span><span class="now-text"></span></div>
     <div class="t-task"></div>
     <div class="t-body"><ol class="t-log"></ol><div class="t-term"></div><button class="t-jump" hidden>有新动态 ↓</button></div>
+    <div class="t-children" role="group" aria-label="子助手"></div>
     <div class="t-wait"></div>`;
   Object.assign(el, { _count: 0, _first: null, _sig: '', _rawSize: 0, _rawPrev: '', _queue: [], _stickLog: true, _stickTerm: true, _vendor: '' });
   const log = $('.t-log', el), term = $('.t-term', el), jump = $('.t-jump', el);
@@ -264,7 +267,46 @@ function codeLine(line) {
   return div;
 }
 
-function updateTile(run, a) {
+function updateChildCards(el, children) {
+  const group = $('.t-children', el);
+  const cards = el._childCards ??= new Map();
+  const names = new Set(children.map((child) => child.name));
+  for (const [name, card] of cards) {
+    if (!names.has(name)) { card.remove(); cards.delete(name); }
+  }
+  for (const child of children) {
+    let card = cards.get(child.name);
+    if (!card) {
+      card = document.createElement('details');
+      card.className = 'sub-card';
+      card.innerHTML = '<summary><strong class="sub-name"></strong><span class="sub-status"></span><span class="sub-current"></span></summary><ol class="sub-log" aria-label="最近动态，最新在前"></ol>';
+      const prefix = child.parent + ' › ';
+      $('.sub-name', card).textContent = child.name.startsWith(prefix) ? child.name.slice(prefix.length) : child.name;
+      $('.sub-name', card).title = child.name;
+      group.appendChild(card);
+      cards.set(child.name, card);
+    }
+    const events = child.events || [];
+    const latest = events.findLast((ev) => ['act', 'say', 'warn', 'error', 'blocked'].includes(ev.type));
+    const current = plain(latest?.text || child.current || '');
+    const summary = $('summary', card);
+    if ($('.sub-current', summary).textContent !== current) {
+      $('.sub-current', summary).textContent = current;
+      $('.sub-current', summary).title = current;
+    }
+    const [, status, hero] = look(child);
+    const badge = $('.sub-status', summary);
+    if (badge.textContent !== status) { badge.textContent = status; badge.className = 'sub-status ' + hero; }
+    const recent = events.slice(-10).reverse();
+    const sig = JSON.stringify(recent);
+    if (card._sig !== sig) {
+      $('.sub-log', card).replaceChildren(...recent.map((ev) => eventRow(ev, false)));
+      card._sig = sig;
+    }
+  }
+}
+
+function updateTile(run, a, children) {
   let el = tiles.get(a.name);
   if (!el) { el = makeTile(a); tiles.set(a.name, el); $('#wall').appendChild(el); }
   const vendor = vendorOf(a);
@@ -277,7 +319,7 @@ function updateTile(run, a) {
   setText('.t-vendor', a.agent === 'claude-session' ? 'Claude 会话' : VENDOR[vendor] || vendor);
   const elapsed = ((a.endedAt ? new Date(a.endedAt) : new Date()) - new Date(a.lastStartedAt || a.startedAt)) / 1000;
   setText('.t-meta', `${dur(elapsed)}  ${tok(a.tokens)} token`);
-  const series = activity(a);
+  const series = activity([a, ...children]);
   const sparkSig = series.join(',') + (a.status === 'running');
   if (el._spark !== sparkSig) { $('.t-spark', el).innerHTML = sparkSvg(series, a.status === 'running'); el._spark = sparkSig; }
   const last = lastActivity(a);
@@ -287,6 +329,10 @@ function updateTile(run, a) {
   lastEl.classList.toggle('stale', stale);
   a._stale = stale && dismissed.get(`${run.id}/${a.name}`) !== last;
   a._quiet = Date.now() - last;
+  const diagKey = `${run.id}/${a.name}`;
+  const diag = diags.get(diagKey);
+  if (diag?.actions?.includes('restart') && a.runningChildActivityMs > diag.checkedAt) diags.delete(diagKey);
+  updateChildCards(el, children);
   setText('.chip-text', stText);
   const now = $('.now', el);
   if (now.className !== `now ${hero}`) now.className = `now ${hero}`;
@@ -413,14 +459,17 @@ function renderWall(run) {
   }
   const emptyBox = $('.empty', wall);
   if (emptyBox) emptyBox.remove();
-  const names = new Set(run.agents.map((a) => a.name));
+  const parents = run.agents.filter((a) => !a.parent);
+  const families = new Map(parents.map((a) => [a.name, []]));
+  for (const child of run.agents) families.get(child.parent)?.push(child);
+  const names = new Set(families.keys());
   for (const [n, el] of tiles) if (!names.has(n)) { el.remove(); tiles.delete(n); }
-  run.agents.forEach((a) => updateTile(run, a));
+  parents.forEach((a) => updateTile(run, a, families.get(a.name)));
   // 只有顺序真的变了才重新排（把画面拿下来再放回去会让它闪一下，动画也会重来）
-  const want = run.agents.map((a) => tiles.get(a.name));
+  const want = parents.map((a) => tiles.get(a.name));
   const have = [...wall.querySelectorAll(':scope > .tile')];
   if (want.length !== have.length || want.some((el, i) => el !== have[i])) want.forEach((el) => wall.appendChild(el));
-  if (wall._n !== run.agents.length || wall._w !== wall.clientWidth) { layoutWall(run.agents.length); wall._n = run.agents.length; wall._w = wall.clientWidth; }
+  if (wall._n !== parents.length || wall._w !== wall.clientWidth) { layoutWall(parents.length); wall._n = parents.length; wall._w = wall.clientWidth; }
   requestAnimationFrame(() => {
     for (const el of tiles.values()) {
       const l = $('.t-log', el), t = $('.t-term', el);
@@ -634,15 +683,18 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if ((b = t('[data-flash]'))) {
-    const el = tiles.get(b.dataset.flash);
+    const agent = currentRun?.agents.find((a) => a.name === b.dataset.flash);
+    const el = agent?.parent ? tiles.get(agent.parent)?._childCards?.get(agent.name) : tiles.get(b.dataset.flash);
+    if (agent?.parent && el) el.open = true;
     if (el) { el.classList.add('flash'); el.scrollIntoView({ block: 'nearest' }); setTimeout(() => el.classList.remove('flash'), 1600); }
     return;
   }
   if ((b = t('[data-diag]'))) {
     const key = `${selected}/${b.dataset.diag}`;
     diags.set(key, 'loading'); tick();
+    const checkedAt = Date.now();
     const r = await api.diagnose(selected, b.dataset.diag);
-    diags.set(key, r || { verdict: 'unknown', title: '没能检查成功', detail: '可以稍后再试。', actions: ['wait'] });
+    diags.set(key, r ? { ...r, checkedAt } : { verdict: 'unknown', title: '没能检查成功', detail: '可以稍后再试。', actions: ['wait'] });
     return tick();
   }
   if ((b = t('[data-kill]'))) {
@@ -706,7 +758,7 @@ document.addEventListener('click', async (e) => {
   }
   if ((b = t('.ev.clamp'))) b.classList.toggle('open');
 });
-window.addEventListener('resize', () => { if (currentRun) layoutWall(currentRun.agents.length); });
+window.addEventListener('resize', () => { if (tiles.size) layoutWall(tiles.size); });
 
 // 提示音：由主程序检测所有任务的变化后通知过来
 if (api.onSound) api.onSound((name) => { if (soundOn) window.consoleSound.play(name); });

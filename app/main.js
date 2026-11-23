@@ -1,7 +1,7 @@
 // AI指挥台 · 桌面窗口主进程：读取 runs/ 里的记录，提供给界面；处理停止按钮和系统通知。
 const { app, BrowserWindow, ipcMain, Notification, shell } = require('electron');
 const { readSession } = require('./transcript');
-const { diagnose } = require('./diagnose');
+const { diagnose, includeChildActivity } = require('./diagnose');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
@@ -41,7 +41,7 @@ function loadAgents(runDir) {
   const dir = path.join(runDir, 'agents');
   let names = [];
   try { names = fs.readdirSync(dir); } catch { return []; }
-  return names.map((name) => {
+  const agents = names.map((name) => {
     const d = path.join(dir, name);
     const meta = readJSON(path.join(d, 'meta.json'), null);
     if (!meta) return null;
@@ -53,10 +53,18 @@ function loadAgents(runDir) {
       return { ...meta, ...s, rawMtime: tm, _mtime: tm };
     }
     if (meta.status === 'running' && !alive(meta.pid)) meta.status = 'interrupted';
+    const eventsFile = path.join(d, 'events.jsonl');
+    const rawFile = path.join(d, 'raw.log');
+    const events = readLines(eventsFile).slice(-300);
+    const updated = mtime(eventsFile);
+    if (meta.agent === 'agy' && meta.parent) {
+      return { ...meta, events, rawMtime: mtime(rawFile), _mtime: Math.max(updated, Date.parse(meta.lastActivityAt) || 0) };
+    }
     let result = '';
     try { result = fs.readFileSync(path.join(d, 'result.md'), 'utf8'); } catch {}
-    return { ...meta, events: readLines(path.join(d, 'events.jsonl')).slice(-300), result, ...readRawTail(path.join(d, 'raw.log')), _mtime: mtime(path.join(d, 'events.jsonl')) };
+    return { ...meta, events, result, ...readRawTail(rawFile), _mtime: updated };
   }).filter(Boolean).sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
+  return includeChildActivity(agents);
 }
 
 function loadRun(id) {
@@ -146,11 +154,9 @@ function openAgent(run, name, terminal) {
 // ---------- 看看卡哪了：诊断、结束卡住的程序、重启接着做 ----------
 const lastDiag = new Map(); // run/name -> 最近一次诊断结果（只允许结束诊断里找到的那个程序）
 async function diagnoseAgent(run, name) {
-  const d = path.join(RUNS, run, 'agents', name);
-  const meta = readJSON(path.join(d, 'meta.json'), {});
-  const evs = readLines(path.join(d, 'events.jsonl'));
-  const lastEv = evs.length ? new Date(evs[evs.length - 1].ts).getTime() : 0;
-  const last = Math.max(lastEv, mtime(path.join(d, 'raw.log')), new Date(meta.lastStartedAt || meta.startedAt).getTime() || 0);
+  const meta = loadAgents(path.join(RUNS, run)).find((a) => a.name === name) || {};
+  const lastEv = Date.parse(meta.events?.at(-1)?.ts) || 0;
+  const last = Math.max(lastEv, meta.rawMtime || 0, meta.childActivityMs || 0, Date.parse(meta.lastStartedAt || meta.startedAt) || 0);
   const result = await diagnose(meta, last);
   lastDiag.set(`${run}/${name}`, result);
   return result;
@@ -178,8 +184,11 @@ async function restartAgent(run, name) {
 
 function stopAgent(run, name) {
   const d = path.join(RUNS, run, 'agents', name);
-  try { fs.writeFileSync(path.join(d, 'stop.flag'), new Date().toISOString()); } catch {}
   const meta = readJSON(path.join(d, 'meta.json'), {});
+  if (meta.agent === 'agy') {
+    return new Promise((res) => execFile('node', [path.join(ROOT, 'dispatch.mjs'), 'stop', '--run', run, '--name', name], { cwd: ROOT, windowsHide: true }, (err) => res(!err)));
+  }
+  try { fs.writeFileSync(path.join(d, 'stop.flag'), new Date().toISOString()); } catch {}
   return new Promise((res) => {
     if (!meta.childPid) return res(false);
     execFile('taskkill', ['/PID', String(meta.childPid), '/T', '/F'], { windowsHide: true }, () => res(true));

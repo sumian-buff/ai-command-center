@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { createAgyChildren, stopAgyChildren } from './agy-children.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const RUNS = path.join(ROOT, 'runs');
@@ -140,6 +141,11 @@ function cleanClaudeEnv() {
   for (const k of Object.keys(env)) if (/^CLAUDE/i.test(k)) delete env[k];
   return env;
 }
+function agyStream(message, conversationId) {
+  const args = ['--mode', 'accept-edits', '--input-format', 'stream-json', '--output-format', 'stream-json'];
+  if (conversationId) args.push('--conversation', conversationId);
+  return { exe: AGY_EXE, args, stdin: JSON.stringify({ event: 'user', message: { content: message } }) + '\n' };
+}
 const SPEC = {
   codex: {
     label: 'Codex',
@@ -149,8 +155,8 @@ const SPEC = {
   },
   agy: {
     label: 'Antigravity',
-    start: (m, prompt) => ({ exe: AGY_EXE, args: ['--mode', 'accept-edits', '--output-format', 'stream-json', '-p', prompt] }),
-    resume: (m, msg) => ({ exe: AGY_EXE, args: ['--conversation', m.convId, '--mode', 'accept-edits', '--output-format', 'stream-json', '-p', msg] }),
+    start: (_m, prompt) => agyStream(prompt),
+    resume: (m, msg) => agyStream(msg, m.convId),
     open: (m) => `& ${psQuote(AGY_EXE)} --conversation ${m.convId}`,
   },
   claude: {
@@ -175,32 +181,14 @@ function ensureConsole() {
   if (!running) spawn(exe, [ROOT], { cwd: ROOT, detached: true, stdio: 'ignore' }).unref();
 }
 
-// ---------- agy 的浏览器：每个对话要先发一条 /browser 才会启用 ----------
-async function agyEnableBrowser(meta) {
-  const args = meta.convId
-    ? ['--conversation', meta.convId, '--output-format', 'stream-json', '-p', '/browser']
-    : ['--output-format', 'stream-json', '-p', '/browser'];
-  const child = spawn(AGY_EXE, args, { cwd: meta.cwd, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-  let convId = meta.convId;
-  readline.createInterface({ input: child.stdout }).on('line', (line) => {
-    try {
-      const ev = JSON.parse(line);
-      convId = convId || ev.conversation_id || (ev.step_update && ev.step_update.conversation_id) || (ev.result && ev.result.conversation_id);
-    } catch {}
-  });
-  await new Promise((res) => child.on('close', res));
-  return convId;
-}
-
 // ---------- 运行一个助手进程，翻译事件，结束后定状态 ----------
-async function runAgent(run, name, spec) {
+async function runAgent(run, name, spec, browserSetup = false) {
   const dir = agentDir(run, name);
   const eventsFile = path.join(dir, 'events.jsonl');
   const metaFile = path.join(dir, 'meta.json');
   const stopFlag = path.join(dir, 'stop.flag');
   const meta = readJSON(metaFile, null);
-  try { fs.unlinkSync(stopFlag); } catch {}
-  Object.assign(meta, { status: 'running', pid: process.pid, lastStartedAt: now(), endedAt: null, options: [], handover: false, current: '正在启动…' });
+  Object.assign(meta, { status: 'running', pid: process.pid, lastStartedAt: now(), endedAt: null, options: [], handover: false, current: browserSetup ? '正在启用浏览器…' : '正在启动…' });
   const sites = meta.sites || [];
   const cwd = meta.cwd;
 
@@ -217,16 +205,16 @@ async function runAgent(run, name, spec) {
     if (type === 'act' || type === 'say') meta.current = short(text.split('\n')[0], 80);
     writeJSON(metaFile, meta);
   };
-  const checkUrl = (url) => {
+  const checkUrl = (url, report = emit) => {
     let host;
     try { host = new URL(url).hostname.toLowerCase(); } catch { return null; }
-    if (sites.length && !sites.some((s) => host === s || host.endsWith('.' + s))) emit('warn', `访问了任务范围外的网站：${siteName(host)}`);
+    if (sites.length && !sites.some((s) => host === s || host.endsWith('.' + s))) report('warn', `访问了任务范围外的网站：${siteName(host)}`);
     return host;
   };
-  const checkWrite = (p) => {
+  const checkWrite = (p, report = emit) => {
     if (!p) return;
     const abs = path.resolve(cwd, String(p));
-    if (!abs.toLowerCase().startsWith(cwd.toLowerCase())) emit('warn', `改动了任务文件夹以外的文件：${abs}`);
+    if (!abs.toLowerCase().startsWith(cwd.toLowerCase())) report('warn', `改动了任务文件夹以外的文件：${abs}`);
   };
   const addTokens = (n) => { meta.tokens = (meta.tokens || 0) + (n || 0); writeJSON(metaFile, meta); };
 
@@ -252,12 +240,20 @@ async function runAgent(run, name, spec) {
   const child = spawn(spec.exe, spec.args, {
     cwd, stdio: [spec.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'], windowsHide: true, env: spec.env || process.env,
   });
-  if (spec.stdin !== undefined) child.stdin.end(spec.stdin);
+  let lastError = '';
+  const isAgy = meta.agent === 'agy';
+  if (isAgy) {
+    child.stdin.on('error', (err) => { lastError = '无法向 agy 发送消息：' + err.message; });
+  } else if (spec.stdin !== undefined) child.stdin.end(spec.stdin);
   meta.childPid = child.pid;
   writeJSON(metaFile, meta);
+  // 停止请求也可能正好赶在浏览器准备结束与正式进程登记之间。
+  if (isAgy && child.pid) {
+    if (fs.existsSync(stopFlag)) killTree(child.pid);
+    else child.stdin.write(spec.stdin);
+  }
 
   let finalText = '';
-  let lastError = '';
   const agyText = new Map();
 
   // --- Codex 事件 ---
@@ -313,7 +309,7 @@ async function runAgent(run, name, spec) {
   const AGY_TOOLS = {
     read_file: '查看文件', view_file: '查看文件', list_dir: '浏览文件夹', find_by_name: '查找文件', grep_search: '在文件里搜索内容',
     write_to_file: '写入文件', replace_file_content: '修改文件', multi_replace_file_content: '修改文件', sed_file: '修改文件', notebook_edit: '修改笔记本',
-    edit_file: '修改文件', create_file: '新建文件', delete_file: '删除文件',
+    write_file: '写入文件', edit_file: '修改文件', create_file: '新建文件', delete_file: '删除文件',
     search_web: '网上搜索', read_url_content: '读取网页', open_browser_url: '在浏览器打开网页', read_browser_page: '阅读浏览器页面',
     browser_click_element: '在网页上点击', click_browser_pixel: '在网页上点击', browser_input: '在网页上输入文字', browser_scroll: '滚动网页',
     browser_scroll_dom: '滚动网页', browser_press_key: '在网页上按键', capture_browser_screenshot: '给网页截图', browser_get_dom: '读取网页结构',
@@ -322,10 +318,28 @@ async function runAgent(run, name, spec) {
     invoke_subagent: '派出子助手', browser_subagent: '派出浏览器子助手', define_subagent: '创建子助手', manage_subagents: '管理子助手',
     generate_image: '生成图片', ask_permission: '请求权限', ask_custom_permission: '请求权限', ask_question: '向你提问（无人值守时会被自动拒绝）',
     manage_task: '更新任务清单', wait: '等待', wait_5_seconds: '等待',
-    send_message: '给浏览器子助手下指令（具体操作在你的 Chrome 里进行）',
+    send_message: '给子助手发消息',
   };
-  const AGY_WRITE = new Set(['write_to_file', 'replace_file_content', 'multi_replace_file_content', 'sed_file', 'notebook_edit', 'edit_file', 'create_file', 'delete_file']);
+  const AGY_WRITE = new Set(['write_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'sed_file', 'notebook_edit', 'edit_file', 'create_file', 'delete_file']);
   const pick = (obj, keys) => { for (const k of keys) if (obj && obj[k]) return String(obj[k]); return ''; };
+  function describeAgyTool(tool, params, report) {
+    const label = AGY_TOOLS[tool] || `使用工具：${tool}`;
+    const url = pick(params, ['Url', 'url', 'URL']);
+    const file = pick(params, ['Path', 'path', 'AbsolutePath', 'TargetFile', 'File', 'file']);
+    const query = pick(params, ['query', 'Query', 'SearchQuery']);
+    if (AGY_WRITE.has(tool)) checkWrite(file, report);
+    if (url) {
+      const host = checkUrl(url, report);
+      return label + '：' + (host ? siteName(host) : url);
+    }
+    if (query) return label + '：' + query;
+    if (file) return label + '：' + path.basename(file);
+    return label;
+  }
+  const children = isAgy ? createAgyChildren({ dir, meta, describeTool: describeAgyTool, writeJSON, cleanText }) : null;
+  const pollTimer = isAgy ? setInterval(() => children.poll(), 500) : null;
+  let agyResultStatus;
+  let unfinished = [];
   let agyStreaming = false;
   const onAgy = (ev) => {
     // 原始记录：流式回复逐字写入，工具调用写参数和结果
@@ -352,26 +366,22 @@ async function runAgent(run, name, spec) {
         agyText.set(s.step_index, t);
         if (s.state === 'DONE') { emit('say', t); finalText = t; }
         if (s.usage) addTokens(s.usage.total_tokens || 0);
-      } else if (s.step_type === 'tool' && s.state === 'ACTIVE') {
-        const p = (s.tool_info && s.tool_info.parameters) || {};
-        const label = AGY_TOOLS[s.tool_name] || `使用工具：${s.tool_name}`;
-        const url = pick(p, ['Url', 'url', 'URL']);
-        const file = pick(p, ['Path', 'path', 'AbsolutePath', 'TargetFile', 'File', 'file']);
-        const query = pick(p, ['query', 'Query', 'SearchQuery']);
-        let text = label;
-        if (url) { const h = checkUrl(url); text += `：${h ? siteName(h) : url}`; }
-        else if (query) text += `：${query}`;
-        else if (file) text += `：${path.basename(file)}`;
-        if (AGY_WRITE.has(s.tool_name)) checkWrite(file);
-        emit('act', text);
+      } else if ((s.step_type === 'tool' || s.step_type === 'subagent') && s.state === 'ACTIVE') {
+        emit('act', describeAgyTool(s.tool_name, s.tool_info?.parameters, emit));
       } else if (s.step_type === 'tool' && s.state && !['ACTIVE', 'DONE'].includes(s.state)) {
         emit('error', `操作没成功：${AGY_TOOLS[s.tool_name] || s.tool_name}（${s.state}）`);
       }
+      children.handleStep(s, agyText.get(s.step_index));
     } else if (ev.event === 'result') {
+      child.stdin.end();
       const r = ev.result || {};
       setConv(r.conversation_id);
       if (r.response) finalText = r.response;
-      if (r.status && r.status !== 'SUCCESS') { lastError = `agy 结束状态：${r.status}`; emit('error', lastError); }
+      agyResultStatus = r.status || '未提供状态';
+      if (agyResultStatus !== 'SUCCESS') { lastError = `agy 结束状态：${agyResultStatus}`; emit('error', lastError); }
+      if (r.response) children.handleStep({ step_type: 'agent_response' }, r.response);
+      children.poll();
+      unfinished = children.runningNames();
     }
   };
 
@@ -435,20 +445,42 @@ async function runAgent(run, name, spec) {
 
   const code = await new Promise((res) => { child.on('close', res); child.on('error', (e) => { lastError = e.message; res(-1); }); });
   await new Promise((r) => setTimeout(r, 200)); // 等最后几行读完
+  clearInterval(pollTimer);
 
   // 被用户停止后，记录可能被其他进程改过，重新读一次合并
   finalText = cleanText(finalText);
   const stopped = fs.existsSync(stopFlag);
+  if (isAgy && !stopped && !lastError) {
+    if (!agyResultStatus) lastError = 'agy 退出前没有返回本轮结果。';
+    else if (browserSetup && !meta.convId) lastError = '启用浏览器后没有收到 agy 的对话编号。';
+    if (lastError) emit('error', lastError);
+  }
+  const missingReports = !stopped && agyResultStatus === 'SUCCESS' && unfinished.length > 0;
+  if (missingReports) {
+    const reason = '被阻碍：agy 已返回本轮结果，但以下子助手仍在运行，尚未收到回报：' + unfinished.join('、');
+    finalText = finalText ? reason + '\n\n' + finalText : reason;
+  }
   const blocked = /被阻碍[:：]/.test(finalText);
   const options = parseChoices(finalText);
   if (stopped) meta.status = 'stopped';
+  else if (missingReports) meta.status = 'blocked';
   else if (code === 0 && blocked) meta.status = 'blocked';
   else if (code === 0 && options.length) meta.status = 'question';
   else if (code === 0 && !lastError) meta.status = 'done';
   else meta.status = 'failed';
+  if (children) {
+    children.finish(meta.status === 'question' ? 'done' : meta.status);
+    meta.childPid = null;
+    if (browserSetup && meta.status === 'done') {
+      meta.status = 'running';
+      emit('act', '浏览器已启用，准备发送任务');
+      return 'ready';
+    }
+  }
   meta.options = meta.status === 'question' ? options : [];
   meta.endedAt = now();
   if (!finalText && stderr.trim()) finalText = '（没有拿到回复，错误信息如下）\n' + short(stderr.trim(), 2000);
+  if (isAgy && !finalText && lastError) finalText = lastError;
   fs.writeFileSync(path.join(dir, 'result.md'), finalText || '（没有回复）');
 
   const label = { stopped: '已被你停止', blocked: '被阻碍，需要你处理', question: '等你做选择', done: '完成', failed: '失败' }[meta.status];
@@ -465,6 +497,18 @@ async function runAgent(run, name, spec) {
   return meta.status;
 }
 
+// 浏览器任务先用 /browser 启用 Chrome，再在同一个对话里发送正式任务。
+async function dispatchTurn(run, meta, message, resume) {
+  if (meta.agent === 'agy' && meta.browser) {
+    const status = await runAgent(run, meta.name, agyStream('/browser', meta.convId), true);
+    if (status !== 'ready') return status;
+    meta = readJSON(path.join(agentDir(run, meta.name), 'meta.json'), null);
+    resume = true;
+  }
+  const spec = SPEC[meta.agent];
+  return runAgent(run, meta.name, resume ? spec.resume(meta, message) : spec.start(meta, message));
+}
+
 // ---------- 命令：run ----------
 async function cmdRun(a) {
   const run = String(a.run || '');
@@ -478,6 +522,8 @@ async function cmdRun(a) {
   fs.mkdirSync(dir, { recursive: true });
   const old = readJSON(path.join(dir, 'meta.json'), null);
   if (old && old.status === 'running' && alive(old.pid)) { console.error(`「${name}」还在运行，换一个名字或先停止它。`); process.exit(2); }
+  if (old?.parent) { console.error('这个名字属于子助手，请另选一个助手名。'); process.exit(2); }
+  fs.rmSync(path.join(dir, 'stop.flag'), { force: true });
   const sites = a.sites ? String(a.sites).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) : [];
   const meta = {
     name, agent, task: String(a.task || ''), cwd: path.resolve(String(a.cwd || process.cwd())), sites,
@@ -485,23 +531,14 @@ async function cmdRun(a) {
     convId: agent === 'claude' ? randomUUID() : null,
     status: 'running', startedAt: now(), endedAt: null, pid: process.pid, childPid: null, tokens: 0, warnings: 0, options: [], current: '正在启动…',
   };
+  if (agent === 'agy' && (a.browser || sites.length)) meta.browser = true;
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
   fs.writeFileSync(path.join(dir, 'raw.log'), `# ${name} (${agent}) · ${now()}\n# cwd: ${meta.cwd}\n`);
   try { fs.unlinkSync(path.join(dir, 'result.md')); } catch {}
   writeJSON(path.join(dir, 'meta.json'), meta);
   appendLine(path.join(dir, 'events.jsonl'), { ts: now(), type: 'act', text: `接到任务：${meta.task || '（未命名）'}` });
   const prompt = buildPrompt(agent, fs.readFileSync(String(a['prompt-file']), 'utf8').replace(/^\uFEFF/, ''), sites);
-  // agy \u505A\u7F51\u9875\u4EFB\u52A1\uFF08\u6307\u5B9A\u4E86\u7F51\u7AD9\u8303\u56F4\u6216 --browser\uFF09\u65F6\uFF0C\u5148\u542F\u7528\u6D4F\u89C8\u5668\uFF0C\u518D\u5728\u540C\u4E00\u4E2A\u5BF9\u8BDD\u91CC\u53D1\u6B63\u5F0F\u4EFB\u52A1
-  if (agent === 'agy' && (a.browser || sites.length)) {
-    meta.browser = true;
-    meta.current = '正在启用浏览器…';
-    appendLine(path.join(dir, 'events.jsonl'), { ts: now(), type: 'act', text: '\u5148\u7ED9\u5B83\u542F\u7528\u6D4F\u89C8\u5668\uFF08\u8FDE\u63A5\u4F60\u7684 Chrome\uFF09' });
-    meta.convId = await agyEnableBrowser(meta);
-    writeJSON(path.join(dir, 'meta.json'), meta);
-    const status = await runAgent(run, name, SPEC.agy.resume(meta, prompt));
-    process.exit(status === 'done' ? 0 : 1);
-  }
-  const status = await runAgent(run, name, SPEC[agent].start(meta, prompt));
+  const status = await dispatchTurn(run, meta, prompt, false);
   process.exit(status === 'done' ? 0 : 1);
 }
 
@@ -511,6 +548,7 @@ async function cmdResume(a) {
   const dir = agentDir(run, name);
   const meta = readJSON(path.join(dir, 'meta.json'), null);
   if (!meta) { console.error(`找不到助手「${name}」`); process.exit(2); }
+  if (meta.parent) { console.error(`请通过主助手「${meta.parent}」继续任务。`); process.exit(2); }
   if (meta.status === 'running' && alive(meta.pid)) { console.error(`「${name}」还在运行，不能同时继续。`); process.exit(2); }
   if (!meta.convId) { console.error(`「${name}」没有对话编号，无法继续。`); process.exit(2); }
   let msg = a['message-file'] ? fs.readFileSync(String(a['message-file']), 'utf8').replace(/^\uFEFF/, '') : String(a.text || '');
@@ -519,14 +557,11 @@ async function cmdResume(a) {
   // 提醒它沿用原来的工作规则
   const wrapped = msg + '\n\n（请继续遵守最开始的工作规则：每个阶段用一句中文说明；遇到阻碍以「被阻碍：」开头说明；需要选择时写「需要你选择：」并列出编号选项；最后总结。）';
   // 先占住「进行中」，避免启用浏览器那一分钟里，用户在指挥台又点一次继续
-  Object.assign(meta, { status: 'running', pid: process.pid, current: '正在接着干活…', options: [] });
+  fs.rmSync(path.join(dir, 'stop.flag'), { force: true });
+  Object.assign(meta, { status: 'running', pid: process.pid, childPid: null, current: '正在接着干活…', options: [] });
+  if (meta.agent === 'agy' && a.browser) meta.browser = true;
   writeJSON(path.join(dir, 'meta.json'), meta);
-  if (meta.agent === 'agy' && (meta.browser || a.browser)) {
-    meta.browser = true;
-    writeJSON(path.join(dir, 'meta.json'), meta);
-    await agyEnableBrowser(meta); // 每次继续前都确保浏览器是开着的
-  }
-  const status = await runAgent(run, name, SPEC[meta.agent].resume(meta, wrapped));
+  const status = await dispatchTurn(run, meta, wrapped, true);
   process.exit(status === 'done' ? 0 : 1);
 }
 
@@ -536,6 +571,7 @@ function cmdOpen(a) {
   const dir = agentDir(run, name);
   const meta = readJSON(path.join(dir, 'meta.json'), null);
   if (!meta || !meta.convId) { console.error('没有对话编号，无法打开。'); process.exit(2); }
+  if (meta.parent) { console.error(`请打开主助手「${meta.parent}」的对话。`); process.exit(2); }
   if (meta.status === 'running' && alive(meta.pid)) { console.error(`「${name}」还在后台运行，请先停止它再打开对话窗口。`); process.exit(2); }
   const markHandover = (how) => {
     meta.handover = true;
@@ -599,10 +635,30 @@ function cmdAttach(a) {
 }
 
 // ---------- 命令：stop / step / note / status ----------
+function killTree(pid) {
+  try {
+    execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'pipe', windowsHide: true });
+  } catch (err) {
+    if (alive(pid)) throw err;
+  }
+}
 function cmdStop(a) {
   const dir = agentDir(a.run, a.name);
-  fs.writeFileSync(path.join(dir, 'stop.flag'), now());
   const meta = readJSON(path.join(dir, 'meta.json'), {});
+  if (meta.parent) { console.error(`请停止主助手「${meta.parent}」，它会一起停止子助手。`); process.exit(2); }
+  if (meta.agent === 'agy' && meta.status !== 'running') return;
+  fs.writeFileSync(path.join(dir, 'stop.flag'), now());
+  if (meta.agent === 'agy') {
+    if (meta.childPid) killTree(meta.childPid);
+    // 正常情况下由持有日志的调度器统一收尾。调度器意外退出时才接管记录。
+    if (!alive(meta.pid)) {
+      stopAgyChildren(dir, writeJSON);
+      Object.assign(meta, { status: 'stopped', endedAt: now(), childPid: null, current: '已被你停止' });
+      writeJSON(path.join(dir, 'meta.json'), meta);
+      appendLine(path.join(dir, 'events.jsonl'), { ts: meta.endedAt, type: 'stopped', text: meta.current });
+    }
+    return;
+  }
   if (meta.childPid) { try { execFileSync('taskkill', ['/PID', String(meta.childPid), '/T', '/F'], { stdio: 'ignore' }); } catch {} }
 }
 function cmdStep(a) {
