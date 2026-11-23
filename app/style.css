@@ -30,18 +30,18 @@
   --vendor-claude: #3B7A57;
   --vendor-claude-soft: #EBF5EF;
 
-  --st-run: #168A65;
-  --st-run-bg: #E8F6F0;
-  --st-run-hero: #EEF8F4;
+  --st-run: #1D6FD8;
+  --st-run-bg: #E8F1FD;
+  --st-run-hero: #EEF4FE;
   --st-wait: #C2740A;
   --st-wait-bg: #FDF4E3;
   --st-wait-hero: #FEF6E6;
   --st-block: #C83E37;
   --st-block-bg: #FDECEB;
   --st-block-hero: #FEEFED;
-  --st-done: #4E7A59;
-  --st-done-bg: #EEF5F0;
-  --st-done-hero: #F1F6F2;
+  --st-done: #2F8F46;
+  --st-done-bg: #EAF6EC;
+  --st-done-hero: #F0F8F1;
   --st-stale: #B86D14;
 
   --code-ts: #54667B;
