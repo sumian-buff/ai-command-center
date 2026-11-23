@@ -148,11 +148,18 @@ function agyStream(message, conversationId) {
   if (conversationId) args.push('--conversation', conversationId);
   return { exe: AGY_EXE, args, stdin: JSON.stringify({ event: 'user', message: { content: message } }) + '\n' };
 }
+// 仅当派活时显式加了 --network / --add-dir 才放开：单次任务联网、额外可写目录。
+function codexExtra(m) {
+  const extra = [];
+  if (m.network) extra.push('-c', 'sandbox_workspace_write.network_access=true');
+  for (const d of m.addDirs || []) extra.push('--add-dir', d);
+  return extra;
+}
 const SPEC = {
   codex: {
     label: 'Codex',
-    start: (m, prompt) => ({ exe: process.execPath, args: [CODEX_JS, 'exec', '--json', '-s', m.sandbox, '--skip-git-repo-check', '-C', m.cwd, '-'], stdin: prompt }),
-    resume: (m, msg) => ({ exe: process.execPath, args: [CODEX_JS, 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode="${m.sandbox || 'workspace-write'}"`, m.convId, '-'], stdin: msg }),
+    start: (m, prompt) => ({ exe: process.execPath, args: [CODEX_JS, 'exec', '--json', '-s', m.sandbox, '--skip-git-repo-check', '-C', m.cwd, ...codexExtra(m), '-'], stdin: prompt }),
+    resume: (m, msg) => ({ exe: process.execPath, args: [CODEX_JS, 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode="${m.sandbox || 'workspace-write'}"`, ...codexExtra(m), m.convId, '-'], stdin: msg }),
     open: (m) => `& ${psQuote(CODEX_CMD)} resume ${m.convId}`,
   },
   agy: {
@@ -516,7 +523,7 @@ async function cmdRun(a) {
   const run = String(a.run || '');
   const agent = String(a.agent || '');
   if (!run || !SPEC[agent] || !a['prompt-file']) {
-    console.error('用法：node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly]');
+    console.error('用法：node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly] [--network] [--add-dir 目录]');
     process.exit(2);
   }
   const name = String(a.name || agent);
@@ -534,6 +541,8 @@ async function cmdRun(a) {
     status: 'running', startedAt: now(), endedAt: null, pid: process.pid, childPid: null, tokens: 0, warnings: 0, options: [], current: '正在启动…',
   };
   if (agent === 'agy' && (a.browser || sites.length)) meta.browser = true;
+  if (agent === 'codex' && a.network) meta.network = true;
+  if (agent === 'codex' && a['add-dir']) meta.addDirs = String(a['add-dir']).split(',').map((d) => path.resolve(d.trim())).filter(Boolean);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
   fs.writeFileSync(path.join(dir, 'raw.log'), `# ${name} (${agent}) · ${now()}\n# cwd: ${meta.cwd}\n`);
   try { fs.unlinkSync(path.join(dir, 'result.md')); } catch {}
