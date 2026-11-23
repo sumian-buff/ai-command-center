@@ -283,7 +283,10 @@ export function createAgyChildren({ dir, meta, describeTool, writeJSON, cleanTex
     };
     const updated = readRows(c.tail, c.dir, row => {
       const calls = Array.isArray(row.tool_calls) ? row.tool_calls.filter(t => t?.name) : [];
-      for (const tool of calls) emit('act', describeTool(tool.name, tool.args || {}, emit));
+      // 子助手里的 send_message 是向主助手回报，不是再派活给别的子助手。
+      for (const tool of calls) {
+        emit('act', tool.name === 'send_message' ? '向主助手回报' : describeTool(tool.name, tool.args || {}, emit));
+      }
       if (row.type === 'PLANNER_RESPONSE' && row.content) emit('say', row.content);
       if (row.status === 'ERROR' || row.status === 'FAILED') emit('error', '子助手的一步操作失败了');
       const raw = calls.length ? JSON.stringify(calls) : String(row.content || row.type || '');
