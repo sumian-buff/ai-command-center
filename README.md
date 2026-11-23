@@ -327,3 +327,18 @@ ai指挥台/
 ## 开源协议
 
 [MIT](LICENSE)
+
+## 上架类任务（小红书小工具）
+
+后台 Codex 默认不能出沙箱、不能联网。上传、预览、送审这类任务派活时加上：
+
+```powershell
+node dispatch.mjs run ... --agent codex `
+  --path-add "C:\Users\Administrator\AppData\Local\Codex\redapp-cli\npm-prefix" `
+  --approve-for-me
+```
+
+- `--path-add`：把 redapp 的安装目录临时加进这个 Codex 进程的 PATH。
+- `--approve-for-me`：允许 Codex 请求出沙箱。先按 `~/.codex/rules/default.rules` 判定（redapp 的查询、登录、上传、预览、送审、改资料已放行），规则没写的交给 Codex 自动审核，写了 forbidden 的一律拒绝。**只用于上架类任务**，写代码的任务不要加。
+- `--network` 在 Windows 的 Codex 沙箱里不起作用，联网要靠出沙箱。
+- redapp 的用法以 `~/.codex/skills/redapp-cli/SKILL.md` 为准；送审前必须让用户扫码并明确说「预览通过」。
