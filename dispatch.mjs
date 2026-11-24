@@ -143,8 +143,9 @@ function cleanClaudeEnv() {
   for (const k of Object.keys(env)) if (/^CLAUDE/i.test(k)) delete env[k];
   return env;
 }
-function agyStream(message, conversationId) {
+function agyStream(message, conversationId, model) {
   const args = ['--mode', 'accept-edits', '--input-format', 'stream-json', '--output-format', 'stream-json'];
+  if (model) args.push('--model', model); // 例如 gemini-4-neon-xhigh，用 agy models 查看
   if (conversationId) args.push('--conversation', conversationId);
   return { exe: AGY_EXE, args, stdin: JSON.stringify({ event: 'user', message: { content: message } }) + '\n' };
 }
@@ -152,7 +153,8 @@ function agyStream(message, conversationId) {
 function codexExtra(m) {
   const extra = [];
   if (m.network) extra.push('-c', 'sandbox_workspace_write.network_access=true');
-  for (const d of m.addDirs || []) extra.push('--add-dir', d);
+  // 额外可写目录用 -c 配置传：exec resume 不认 --add-dir，-c 对新建和继续都生效
+  if (m.addDirs && m.addDirs.length) extra.push('-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(m.addDirs)}`);
   // --approve-for-me（只用于上架类任务）：允许请求出沙箱，先按 ~/.codex/rules 判定，规则未覆盖的交给 Codex 自动审核。
   // 用 -c 配置而不是 codex 的同名参数，因为 exec resume 不支持该参数，而 -c 对新建和继续都生效。
   if (m.approveForMe) extra.push('-c', 'approval_policy="on-request"', '-c', 'approvals_reviewer="auto_review"');
@@ -173,8 +175,8 @@ const SPEC = {
   },
   agy: {
     label: 'Antigravity',
-    start: (_m, prompt) => agyStream(prompt),
-    resume: (m, msg) => agyStream(msg, m.convId),
+    start: (m, prompt) => agyStream(prompt, null, m.model),
+    resume: (m, msg) => agyStream(msg, m.convId, m.model),
     open: (m) => `& ${psQuote(AGY_EXE)} --conversation ${m.convId}`,
   },
   claude: {
@@ -518,7 +520,7 @@ async function runAgent(run, name, spec, browserSetup = false) {
 // 浏览器任务先用 /browser 启用 Chrome，再在同一个对话里发送正式任务。
 async function dispatchTurn(run, meta, message, resume) {
   if (meta.agent === 'agy' && meta.browser) {
-    const status = await runAgent(run, meta.name, agyStream('/browser', meta.convId), true);
+    const status = await runAgent(run, meta.name, agyStream('/browser', meta.convId, meta.model), true);
     if (status !== 'ready') return status;
     meta = readJSON(path.join(agentDir(run, meta.name), 'meta.json'), null);
     resume = true;
@@ -532,7 +534,7 @@ async function cmdRun(a) {
   const run = String(a.run || '');
   const agent = String(a.agent || '');
   if (!run || !SPEC[agent] || !a['prompt-file']) {
-    console.error('用法：node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly] [--network] [--add-dir 目录] [--path-add 目录] [--approve-for-me]');
+    console.error('用法：node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly] [--network] [--add-dir 目录] [--model agy模型] [--path-add 目录] [--approve-for-me]');
     process.exit(2);
   }
   const name = String(a.name || agent);
@@ -551,6 +553,7 @@ async function cmdRun(a) {
   };
   if (agent === 'agy' && (a.browser || sites.length)) meta.browser = true;
   if (agent === 'codex' && a.network) meta.network = true;
+  if (agent === 'agy' && a.model && a.model !== true) meta.model = String(a.model);
   if (agent === 'codex' && a['approve-for-me']) {
     if (a.readonly) { console.error('--approve-for-me 不能与 --readonly 同时使用。'); process.exit(2); }
     meta.approveForMe = true;
