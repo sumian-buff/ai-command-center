@@ -10,6 +10,7 @@ const { execFile, spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const RUNS = path.join(ROOT, 'runs');
+const recorder = process.env.AICONSOLE_RECORD?.trim() ? require('../promo/record.cjs').configure(app) : null;
 
 function readJSON(f, d) {
   try { return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')); } catch { return d; }
@@ -224,7 +225,7 @@ function scanForNotifications(first) {
       if (first || prev === undefined || a.events.length < prev) continue;
       for (const ev of a.events.slice(prev)) {
         const title = { warn: `${a.name} 可能跑偏了`, blocked: `${a.name} 被阻碍，需要你处理`, question: `${a.name} 等你做选择`, done: `${a.name} 完成了`, error: `${a.name} 出错了` }[ev.type];
-        if (title && Notification.isSupported()) new Notification({ title, body: ev.text, silent: true }).show();
+        if (!recorder && title && Notification.isSupported()) new Notification({ title, body: ev.text, silent: true }).show();
         if (['warn', 'blocked', 'question', 'error'].includes(ev.type)) want('attention');
         if (ev.type === 'done') doneNow = true;
       }
@@ -235,12 +236,20 @@ function scanForNotifications(first) {
 }
 
 function createWindow() {
-  const win = new BrowserWindow({
+  const options = {
     width: 1280, height: 860, minWidth: 900, minHeight: 600,
     title: 'AI指挥台', autoHideMenuBar: true, backgroundColor: '#FAF8F4',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
-  });
+  };
+  const win = new BrowserWindow(recorder
+    ? recorder.windowOptions(options, require('electron').screen.getPrimaryDisplay().workArea)
+    : options);
   mainWin = win;
+  if (recorder) {
+    recorder.record(win, path.join(__dirname, 'index.html'))
+      .then(() => app.exit(0), (error) => { console.error('[record]', error); app.exit(1); });
+    return;
+  }
   win.loadFile(path.join(__dirname, 'index.html'));
   // 调试用：设置环境变量 AICONSOLE_SHOT=<png路径> 时，几秒后把窗口画面存成图片
   if (process.env.AICONSOLE_SHOT) {
@@ -280,7 +289,8 @@ app.whenReady().then(() => {
     try { setFolded(RUNS, run, name, hidden); return ''; }
     catch (err) { return err.message; }
   });
-  ipcMain.handle('agent:reply', (_e, { run, name, text }) => replyAgent(run, name, text));
+  ipcMain.handle('agent:reply', (_e, { run, name, text }) =>
+    recorder ? recorder.reply(run, name, text) : replyAgent(run, name, text));
   ipcMain.handle('agent:open', (_e, { run, name, terminal }) => openAgent(run, name, terminal));
   ipcMain.handle('layout:get', () => readJSON(LAYOUT, null));
   ipcMain.handle('layout:set', (_e, layout) => saveLayout(layout));
