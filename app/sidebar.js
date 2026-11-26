@@ -75,7 +75,17 @@
     return ['', agents.length ? '已停下' : '规划中'];
   }
   const dotClass = (s) => ({ running: 'd-run', question: 'd-wait', blocked: 'd-block', done: 'd-done' }[s] || '');
-  const dots = (runIds) => runIds.flatMap((id) => (runsById[id] ? runsById[id].agents : [])).slice(0, 8).map((a) => `<i class="${dotClass(a.status)}"></i>`).join('');
+  const STATUS_TEXT = { running: '运行中', question: '等你选择', blocked: '被阻碍', done: '已完成', failed: '失败', stopped: '已停止', interrupted: '已中断' };
+  function dotItem(a) {
+    const stCls = dotClass(a.status);
+    const v = window.consoleVendor ? window.consoleVendor.resolve(a) : null;
+    if (v && v.hasIdentity && v.styleVars) {
+      const tip = [v.name, STATUS_TEXT[a.status] || a.status].filter(Boolean).join(' · ');
+      return `<i class="has-v ${stCls}" style="${esc(v.styleVars)}"${tip ? ` title="${esc(tip)}"` : ''}></i>`;
+    }
+    return `<i class="${stCls}"></i>`;
+  }
+  const dots = (runIds) => runIds.flatMap((id) => (runsById[id] ? runsById[id].agents : [])).slice(0, 8).map(dotItem).join('');
 
   // ---------- 画出来 ----------
   function actions(kind, id, node) {
@@ -317,6 +327,7 @@
   window.consoleSidebar = {
     async init(h) { hooks = h; layout = await api.getLayout(); bind(); },
     render,
+    invalidate() { lastSig = ''; },
     busy: () => !!dragging || !!renaming,
     // 给主界面用：没手动选择时，默认看哪个任务（置顶和普通里最上面那个，跳过归档）
     firstVisible() {

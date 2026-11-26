@@ -44,13 +44,20 @@ function ago(ms) {
   return new Date(ms).toLocaleDateString('zh-CN');
 }
 const tok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n || 0));
-const vendorOf = (a) => (a.agent === 'claude-session' ? 'claude' : a.agent);
-const VENDOR = { codex: 'Codex', agy: 'Antigravity', claude: 'Claude' };
-const ICONS = {
-  codex: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="8 6 3 12 8 18"/><polyline points="16 6 21 12 16 18"/><line x1="13" y1="5" x2="11" y2="19"/></svg>',
-  agy: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><circle cx="12" cy="12" r="3.4"/><ellipse cx="12" cy="12" rx="9.5" ry="4.4" transform="rotate(-28 12 12)"/></svg>',
-  claude: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>',
-};
+const vendorOf = (a) => (a.agent === 'claude-session' ? 'claude' : String(a.agent || '').toLowerCase());
+const safeVendorCls = (k) => String(k || '').replace(/[^a-z0-9_-]/gi, '') || 'other';
+const vendorMeta = (a) => window.consoleVendor.resolve(a);
+function applyVendorVars(el, v) {
+  const props = ['--v-color-light', '--v-soft-light', '--v-color-cool', '--v-soft-cool'];
+  if (!v || !v.styleVars) {
+    props.forEach((p) => el.style.removeProperty(p));
+    return;
+  }
+  for (const part of v.styleVars.split(';')) {
+    const idx = part.indexOf(':');
+    if (idx > 0) el.style.setProperty(part.slice(0, idx), part.slice(idx + 1));
+  }
+}
 // 状态 -> [画面样式, 状态文字, 主角区样式, 主角区标签]
 function look(a) {
   if (a.handover && a.status !== 'running') return ['handover', '你接管中', 'h-wait', '你接管中'];
@@ -210,7 +217,7 @@ function makeTile(a) {
     <div class="t-body"><ol class="t-log"></ol><div class="t-term"></div><button class="t-jump" hidden>有新动态 ↓</button></div>
     <div class="t-children" role="group" aria-label="子助手"></div>
     <div class="t-wait"></div>`;
-  Object.assign(el, { _count: 0, _first: null, _sig: '', _rawSize: 0, _rawPrev: '', _queue: [], _stickLog: true, _stickTerm: true, _vendor: '' });
+  Object.assign(el, { _count: 0, _first: null, _sig: '', _rawSize: 0, _rawPrev: '', _queue: [], _stickLog: true, _stickTerm: true, _vSig: '' });
   const log = $('.t-log', el), term = $('.t-term', el), jump = $('.t-jump', el);
   const nearBottom = (box) => box.scrollHeight - box.scrollTop - box.clientHeight < 28;
   log.addEventListener('scroll', () => { if (log.clientHeight) { el._stickLog = nearBottom(log); if (el._stickLog) jump.hidden = true; } });
@@ -238,7 +245,8 @@ function classify(line) {
   const m = line.match(/^\[(\d\d:\d\d:\d\d)\]\s?([\s\S]*)$/);
   const ts = m ? m[1] : '';
   const rest = m ? m[2] : line;
-  const who = rest.match(/^(codex|agy|claude|subagent):\s?([\s\S]*)$/);
+  const ids = window.consoleVendor.knownIds().map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).filter(Boolean);
+  const who = ids.length ? rest.match(new RegExp(`^(${ids.join('|')}):\\s?([\\s\\S]*)$`, 'i')) : null;
   if (who) return { ts, who: who[1], text: who[2], cls: 'c-say', lineCls: '' };
   let cls = '';
   if (/^(PS>|>>|\$ )/.test(rest) || /^(\+\+\+|\*\*\*|---)\s/.test(rest)) cls = 'c-cmd';
@@ -326,13 +334,19 @@ function updateTile(run, a, children) {
   let el = tiles.get(a.name);
   if (!el) { el = makeTile(a); tiles.set(a.name, el); $('#wall').appendChild(el); }
   const vendor = vendorOf(a);
+  const v = vendorMeta(a);
   const [st, stText, hero, heroK] = look(a);
-  const cls = `tile v-${vendor} s-${st}${el.classList.contains('flash') ? ' flash' : ''}`;
+  const cls = `tile v-${safeVendorCls(vendor)} s-${st}${el.classList.contains('flash') ? ' flash' : ''}`;
   if (el.className !== cls) el.className = cls;
   const setText = (sel, text) => { const n = $(sel, el); if (n.textContent !== text) n.textContent = text; };
-  if (el._vendor !== vendor) { $('.mark', el).innerHTML = ICONS[vendor] || ''; el._vendor = vendor; }
+  const vSig = `${v.iconSvg}|${v.styleVars}`;
+  if (el._vSig !== vSig) {
+    $('.mark', el).innerHTML = v.iconSvg || '';
+    applyVendorVars(el, v);
+    el._vSig = vSig;
+  }
   setText('.t-name', a.name);
-  setText('.t-vendor', a.agent === 'claude-session' ? 'Claude 会话' : VENDOR[vendor] || vendor);
+  setText('.t-vendor', v.name);
   const elapsed = ((a.endedAt ? new Date(a.endedAt) : new Date()) - new Date(a.lastStartedAt || a.startedAt)) / 1000;
   setText('.t-meta', `${dur(elapsed)}  ${tok(a.tokens)} token`);
   const series = activity([a, ...children]);
@@ -512,13 +526,16 @@ function renderWall(run) {
 function renderFolded(run) {
   const bar = $('#folded');
   const list = run ? run.agents.filter((a) => !a.parent && a.folded) : [];
-  const sig = JSON.stringify(list.map((a) => [a.name, a.status, a.agent]));
+  const sig = JSON.stringify(list.map((a) => [a.name, a.status, a.agent, a.vendorInfo]));
   if (bar._sig === sig) return;
   bar._sig = sig;
   bar.hidden = !list.length;
   if (!list.length) { bar.innerHTML = ''; return; }
   bar.innerHTML = `<span class="f-label">已收起 ${list.length} 张用完的卡片</span>`
-    + list.map((a) => `<button class="f-chip v-${vendorOf(a)}" data-unfold="${esc(a.name)}" title="放回墙上"><i></i>${esc(a.name)}<em>${esc(look(a)[1])}</em></button>`).join('')
+    + list.map((a) => {
+      const v = vendorMeta(a);
+      return `<button class="f-chip v-${safeVendorCls(vendorOf(a))}" style="${esc(v.styleVars)}" data-unfold="${esc(a.name)}" title="放回墙上"><i></i>${esc(a.name)}<em>${esc(look(a)[1])}</em></button>`;
+    }).join('')
     + '<span class="f-tip">点名字放回墙上</span>';
 }
 
@@ -608,12 +625,14 @@ function pump() {
 function renderChat(run) {
   const box = $('#drawer');
   const a = run && chatWith ? run.agents.find((x) => x.name === chatWith) : null;
-  if (!a) { if (box._sig) { box.innerHTML = ''; box.classList.remove('open'); box._sig = ''; } return; }
+  if (!a) { if (box._sig) { box.innerHTML = ''; box.classList.remove('open'); applyVendorVars(box, null); box._sig = ''; } return; }
   if (box.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA') return;
   // 内容没变就不重画，避免聊天窗口一闪一闪
-  const chatSig = JSON.stringify([run.id, a.name, a.events.length, a.status, a.options, a.agent]);
+  const chatSig = JSON.stringify([run.id, a.name, a.events.length, a.status, a.options, a.agent, a.vendorInfo]);
   if (box._sig === chatSig) return;
   box._sig = chatSig;
+  const v = vendorMeta(a);
+  applyVendorVars(box, v);
   const key = `chat:${run.id}/${a.name}`;
   const old = $('.c-log', box);
   const atBottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 40;
@@ -629,8 +648,13 @@ function renderChat(run) {
   const options = a.status === 'question' && a.options ? a.options : [];
   box.classList.add('open');
   box.innerHTML = `
-    <div class="c-head"><div><b>${esc(a.name)}</b><span>${esc(VENDOR[vendorOf(a)] || a.agent)} · ${esc(look(a)[1])}</span></div>
-      <button class="mini" data-chat-close="1">关闭</button></div>
+    <div class="c-head">
+      <div class="c-who-head">
+        <div class="mark">${v.iconSvg}</div>
+        <div class="c-who-meta"><b>${esc(a.name)}</b><span><em class="c-vname">${esc(v.name)}</em> · ${esc(look(a)[1])}</span></div>
+      </div>
+      <button class="mini" data-chat-close="1">关闭</button>
+    </div>
     <div class="c-log">${items || '<div class="c-act">还没有对话内容</div>'}${running ? '<div class="c-act live">它正在工作…</div>' : ''}</div>
     ${options.length ? `<div class="c-opts">${options.map((o, i) => `<button class="w-opt" data-choose="${i}" data-name="${esc(a.name)}" data-full="${esc(plain(o))}" title="${esc(plain(o))}"><span>${i + 1}.</span>${esc(plain(o))}</button>`).join('')}</div>` : ''}
     <div class="c-input">
@@ -665,6 +689,17 @@ async function tick() {
     const run = selected ? await api.getRun(selected) : null;
     if (run && currentRun && run.id !== currentRun.id) { for (const el of tiles.values()) el.remove(); tiles.clear(); }
     currentRun = run;
+    // 若 listRuns 里的摘要尚未附带 vendorInfo，用已加载的当前任务助手信息补全侧栏圆点颜色
+    if (run) {
+      const sumItem = runs.find((r) => r.id === run.id);
+      if (sumItem && Array.isArray(sumItem.agents) && sumItem.agents.length === run.agents.length) {
+        sumItem.agents = sumItem.agents.map((sa, idx) => ({
+          ...sa,
+          agent: sa.agent || run.agents[idx].agent,
+          vendorInfo: sa.vendorInfo || run.agents[idx].vendorInfo,
+        }));
+      }
+    }
     renderSidebar(runs); // 自己判断有没有变化，拖动或改名时不会重画
     // 顶部只跟状态、提醒有关；「现在在做什么」变了不用重画顶部
     const headSig = JSON.stringify([run && run.plan, run && run.notes.length, run && run.agents.map((a) => [a.name, a.status, a.warnings, a.handover, a.status === 'blocked' ? blockedReason(a) : '', a.warnings ? (a.events.filter((e) => e.type === 'warn').pop() || {}).text : '']), notesOpen, cool, soundOn, typeSoundOn]);
@@ -798,8 +833,17 @@ document.addEventListener('click', async (e) => {
     if (err) alert(err);
     return tick();
   }
-  if ((b = t('[data-chat]'))) { chatWith = b.dataset.chat; $('#drawer')._sig = ''; return tick(); }
-  if (t('[data-chat-close]')) { chatWith = null; return tick(); }
+  if ((b = t('[data-chat]'))) {
+    if (window.consoleAgents && window.consoleAgents.isOpen()) window.consoleAgents.close();
+    chatWith = b.dataset.chat; $('#drawer')._sig = '';
+    requestAnimationFrame(() => { $('#wall')._w = 0; if (tiles.size) layoutWall(tiles.size); });
+    return tick();
+  }
+  if (t('[data-chat-close]')) {
+    chatWith = null;
+    requestAnimationFrame(() => { $('#wall')._w = 0; if (tiles.size) layoutWall(tiles.size); });
+    return tick();
+  }
   if ((b = t('[data-link]'))) {
     const err = await api.openLink(selected, b.dataset.link);
     err ? toasts.set(`${selected}/${b.dataset.link}`, err) : toasts.delete(`${selected}/${b.dataset.link}`);
@@ -843,6 +887,23 @@ window.addEventListener('resize', () => { if (tiles.size) layoutWall(tiles.size)
 if (api.onSound) api.onSound((name) => { if (soundOn) window.consoleSound.play(name); });
 
 applyCool();
+window.consoleAgents.init({
+  onToggle(isOpen) {
+    if (isOpen && chatWith) { chatWith = null; renderChat(currentRun); }
+    requestAnimationFrame(() => {
+      const wall = $('#wall');
+      if (wall) wall._w = 0;
+      if (tiles.size) layoutWall(tiles.size);
+    });
+  },
+  onUpdate() {
+    for (const el of tiles.values()) el._vSig = '';
+    if ($('#folded')) $('#folded')._sig = '';
+    if ($('#drawer')) $('#drawer')._sig = '';
+    window.consoleSidebar.invalidate();
+    if (currentRun) { renderWall(currentRun); renderChat(currentRun); }
+  },
+});
 window.consoleSidebar.init({ refresh: () => tick(), selected: () => selected }).then(() => {
   tick();
   setInterval(tick, 1200);
