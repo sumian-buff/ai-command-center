@@ -25,6 +25,7 @@
     <div class="nav-caption"><span>任务列表</span><span id="run-count"></span></div>
     <nav id="runs"></nav>
     <div id="summary"></div>
+    <div id="agents-bar"></div>
   </aside>
   <main id="main">
     <header id="head"></header>
@@ -32,6 +33,7 @@
     <footer id="folded" hidden></footer>
   </main>
   <aside id="drawer"></aside>
+  <aside id="agents-drawer" aria-label="助手面板" hidden></aside>
   <dialog id="mark-dialog" aria-labelledby="mark-question">
     <p id="mark-question"></p>
     <p id="mark-error" class="w-toast" role="alert"></p>
@@ -41,6 +43,7 @@
     </div>
   </dialog>
   <script src="sound.js"></script>
+  <script src="agents-panel.js"></script>
   <script src="sidebar.js"></script>
   <script src="renderer.js"></script>
 </body>
