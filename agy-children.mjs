@@ -70,7 +70,7 @@ function childMetas(dir) {
     let meta;
     try { meta = JSON.parse(fs.readFileSync(path.join(agents, entry.name, 'meta.json'), 'utf8')); }
     catch (e) { if (e.code === 'ENOENT' || e instanceof SyntaxError) continue; throw e; }
-    if (meta.parent === parent && meta.agent === 'agy') children.push(meta);
+    if (meta.parent === parent && (meta.kind || meta.agent) === 'agy') children.push(meta);
   }
   return children;
 }
@@ -137,7 +137,7 @@ export function createAgyChildren({ dir, meta, describeTool, writeJSON, cleanTex
       name = `${meta.name} › ${label}${number === 1 ? '' : ' ' + number}`;
     } while (fs.existsSync(path.join(agents, name)));
     const child = {
-      name, parent: meta.name, parentConvId: meta.convId, agent: 'agy', convId: null,
+      name, parent: meta.name, parentConvId: meta.convId, agent: meta.agent, kind: 'agy', convId: null,
       task: descriptor.role || descriptor.Role || '', cwd: meta.cwd, pid: meta.pid,
       startedAt: now(), endedAt: null, status: 'running', current: '已派出，等待子助手记录',
     };

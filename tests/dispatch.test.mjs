@@ -40,6 +40,13 @@ function sandbox(t) {
   for (const f of fs.readdirSync(repo).filter(f => f.endsWith('.mjs') || f.endsWith('.cjs'))) {
     fs.copyFileSync(path.join(repo, f), path.join(work, f))
   }
+  fs.copyFileSync(path.join(repo, 'agents.default.json'), path.join(work, 'agents.default.json'))
+  // The registry checks that the program exists before the test redirects its launch.
+  for (const relative of ['agy/bin/agy.exe', 'npm/node_modules/@openai/codex/bin/codex.js', 'npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe']) {
+    const file = path.join(home, relative)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, '')
+  }
   fs.writeFileSync(path.join(work, 'prompt.txt'), prompt)
   const wire = () => lines(path.join(work, 'wire.jsonl'))
   const live = new Set()
@@ -58,8 +65,9 @@ function sandbox(t) {
   })
   function dispatch(command, args, scenario, agentName = name) {
     const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home, FAKE_SCENARIO: scenario }
+    const target = agentName ? ['--run', 'case', '--name', agentName] : []
     const child = spawn(process.execPath, ['--require', redirect, path.join(work, 'dispatch.mjs'), command,
-      '--run', 'case', '--name', agentName, ...args], { env, cwd: work, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      ...target, ...args], { env, cwd: work, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
     for (const pipe of [child.stdout, child.stderr]) {
       pipe.setEncoding('utf8')
@@ -81,6 +89,7 @@ function sandbox(t) {
     return fs.readdirSync(agents).map(n => meta(n)).find(m => m?.parent === name)
   }
   return {
+    cli: (command, args = []) => dispatch(command, args, 'settings', ''),
     run: (scenario, agent = 'agy', args = []) => dispatch('run', [
       '--agent', agent, '--cwd', work, '--task', '离线测试', '--prompt-file', 'prompt.txt', ...args], scenario),
     resume: (scenario) => dispatch('resume', ['--text', '接着做'], scenario),
@@ -224,6 +233,60 @@ for (const agent of ['codex', 'claude']) {
     assert.match(h.result(), /测试回复/)
   })
 }
+
+test('名单命令显示状态，拒绝桌面助手、未知编号和缺失程序', async t => {
+  const h = sandbox(t)
+  const { code, output } = await h.cli('agents', ['--json'])
+  assert.equal(code, 0, output)
+  const list = JSON.parse(output)
+  assert.equal(list.find(a => a.id === 'agy').found, true)
+  assert.equal(list.find(a => a.id === 'grok').enabled, false)
+  assert.match((await h.cli('agents')).output, /Grok Bot.+已关闭/)
+  for (const [agent, reason] of [['grok', /暂无官方命令行/], ['none', /名单里没有/]]) {
+    const r = await h.run('simple', agent)
+    assert.equal(r.code, 2)
+    assert.match(r.output, reason)
+  }
+  fs.unlinkSync(path.join(h.work, 'home/agy/bin/agy.exe'))
+  const missing = await h.run('simple', 'agy')
+  assert.equal(missing.code, 2)
+  assert.match(missing.output, /找不到 Antigravity 的启动程序/)
+  assert.equal(h.meta(), null)
+  assert.deepEqual(h.wire(), [])
+})
+
+test('新编号能复用 Codex，派活时覆盖默认模型，关闭后保留对话和历史结果', async t => {
+  const h = sandbox(t)
+  const file = path.join(h.work, 'agents.default.json')
+  const list = JSON.parse(fs.readFileSync(file, 'utf8'))
+  list.push({ ...list.find(a => a.id === 'codex'), id: 'reviewer', name: '复核助手' })
+  fs.writeFileSync(file, JSON.stringify(list))
+  const set = (...args) => h.cli('agent-set', ['--id', 'reviewer', ...args])
+  await exitIs(set('--role', '检查题目', '--model', 'default-model'), 0)
+  for (const args of [['--command', 'unsafe.exe'], ['--enabled', 'yes']]) await exitIs(set(...args), 2)
+  const { role, model } = JSON.parse((await h.cli('agents', ['--json'])).output).find(a => a.id === 'reviewer')
+  assert.deepEqual([role, model], ['检查题目', 'default-model'])
+  await exitIs(h.run('simple', 'reviewer'), 0)
+  assert.ok(h.wire()[0].args.includes('default-model'))
+  await exitIs(h.run('simple', 'reviewer', ['--model', 'run-model']), 0)
+  await exitIs(h.resume('simple'), 0)
+  const meta = h.meta()
+  assert.deepEqual([meta.agent, meta.kind, meta.convId], ['reviewer', 'codex', parentId])
+  const [start, resume] = h.wire().slice(-2)
+  assert.match(start.input, /不要执行 git commit \/ git push/)
+  for (const { args } of [start, resume]) assert.equal(args[args.indexOf('--model') + 1], 'run-model')
+  await exitIs(set('--enabled', 'false'), 0)
+  const oldResult = h.result()
+  for (const call of [() => h.run('simple', 'reviewer'), () => h.resume('simple')]) {
+    const r = await call()
+    assert.equal(r.code, 2)
+    assert.match(r.output, /复核助手 已关闭/)
+  }
+  assert.deepEqual(h.meta(), meta)
+  assert.equal(h.result(), oldResult)
+  assert.match(h.events().at(-1).text, /已关闭/)
+  assert.equal(h.wire().length, 3)
+})
 
 function seedAgent(h, meta) {
   const dir = path.join(h.work, 'runs', 'case', 'agents', meta.name)

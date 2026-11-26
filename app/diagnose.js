@@ -56,9 +56,9 @@ const mins = (s) => (s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s}
 function includeChildActivity(agents) {
   const byName = new Map(agents.map((a) => [a.name, a]));
   for (const child of agents) {
-    if (child.agent !== 'agy' || !child.parent) continue;
+    if ((child.kind || child.agent) !== 'agy' || !child.parent) continue;
     const parent = byName.get(child.parent);
-    if (!parent || parent.agent !== 'agy') continue;
+    if (!parent || (parent.kind || parent.agent) !== 'agy') continue;
     const lastEvent = child.events?.at(-1);
     const last = Math.max(Date.parse(child.lastActivityAt) || 0, Date.parse(lastEvent?.ts) || 0, child.rawMtime || 0);
     parent.childActivityMs = Math.max(parent.childActivityMs || 0, last);

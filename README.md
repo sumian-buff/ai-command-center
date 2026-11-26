@@ -1,6 +1,6 @@
 # AI指挥台
 
-**你只跟 Claude 说需求，Claude 当总指挥，把活派给 Codex、Antigravity 和其他 Claude 助手；这个桌面小程序像监控墙一样，用大白话实时显示每个助手正在做什么。**
+**你跟 Claude 说需求，Claude 按你开启的助手名单拆任务、派活。AI指挥台用大白话实时显示每个助手正在做什么。**
 
 适合看不懂代码、但同时开着几个 AI 会员、想让它们分工合作的个人创作者。
 
@@ -54,11 +54,10 @@ AI指挥台的做法：
                     │  拆任务、写计划、派活、审查
                     ▼
               dispatch.mjs（调度器）
-        ┌───────────┼───────────────┐
-        ▼           ▼               ▼
-      Codex        agy        Claude 助手 / 侧边栏会话
-        │           │               │
-        └─── 实时事件翻译成大白话，写进 runs/<任务>/ ───┘
+                    │  查看助手名单，按任务选择
+                    ▼
+           Codex / Antigravity / Claude / DeepSeek 等
+                    │  实时事件翻译成大白话，写进 runs/<任务>/
                     │
                     ▼
            AI指挥台窗口（监控墙）◀── 你在这里看、回复、停止
@@ -77,9 +76,30 @@ AI指挥台的做法：
 | [Claude Code](https://docs.claude.com/en/docs/claude-code) | 总指挥。桌面版或命令行版都可以，需要已登录 |
 | [Codex CLI](https://github.com/openai/codex) | `npm i -g @openai/codex`，并登录一次 |
 | Antigravity CLI（`agy`） | 按 Google 官方说明安装，并登录一次 |
+| DeepSeek Harness（可选） | 安装官方 Windows 程序，用自己的账号完成登录 |
 | Google Chrome（可选） | 让 agy 浏览需要登录的网站时使用，见下方「让 agy 使用你的 Chrome」 |
 
 不用的助手可以不装，只是派不了那一类活。
+
+## 助手名单
+
+派活前运行 `node dispatch.mjs agents`，可以看到每个助手的编号、开关、用途、默认模型，以及本机是否找到了程序。总指挥按你实际开启的名单选人；「已找到」只表示本机有相应的程序，账号和网络情况要在试跑时确认。
+
+下面是用户平时的分工习惯。各助手的能力有重叠，可以互相补充，你可以按项目调整定位，也可以让两个助手交叉复核。
+
+| 助手（编号） | 平时怎么分工 |
+|---|---|
+| Claude（`claude`） | 总负责人，负责需要居中调度和思考的事，把项目补全完善直到运营上线 |
+| Codex（`codex`） | 程序代码主体、质量要求高的开发 |
+| Antigravity（`agy`） | 多面手，审美、设计、前端界面、生图、浏览网页；适合做项目的审美复核和进度监督 |
+| DeepSeek（`deepseek`） | 不重要但很耗额度的内容、能力要求不高的简单重复任务，或与 DeepSeek 自身特点相关、直接用它效果更好的内容；程序主体代码一般不交给它 |
+| Grok Bot（`grok`） | 只有桌面程序，暂时不能派活。默认关闭；因暂无官方命令行，即使手动开启也不能无人值守派活 |
+
+例如，运行 `node dispatch.mjs agent-set --id deepseek --enabled false` 可以关闭 DeepSeek，将 `false` 改为 `true` 可重新开启。用 `--role "整理重复资料"` 可以改定位。对支持按任务选模型的助手，可用 `--model "模型名"` 设置默认模型。DeepSeek 的模型由 Harness 的 `headless` 配置决定，请将它在名单中的 `model` 留空；填入模型名会收到提示。初始名单在 `agents.default.json`，个人设置按助手编号保存在 `agents.local.json`，只在本机生效。
+
+**添加新助手**时，先取得用户同意，再在 `agents.default.json` 中复制一项，给它唯一的 `id`，填好显示名 `name`、卡片颜色 `color`、短图标 `icon`、开关 `enabled`、定位 `role` 和官方程序路径 `command`。多个候选路径可列成数组，按顺序查找。默认模型 `model` 可以留空。`kind` 选与该程序命令参数和输出格式兼容的适配方式（`codex`、`agy`、`claude`、`dsh`）。遇到新的命令行协议，需要补充对应的启动方式、事件翻译和测试；只有桌面程序的条目用 `desktop`。改好后再运行 `agents` 核对。
+
+**试用 DeepSeek** 时，指挥台使用 Harness 安装自带的命令行入口，直接启动官方程序，通过标准输入传任务。默认入口是 `D:\DeepSeek-Harness\resources\runtime\cli\bin\dsh.cmd`。总指挥可在沙箱外、在本项目目录运行 `.\scripts\try-deepseek.ps1`，用一条无关紧要的只读任务验证已登录账号，并采集真实回包。离线测试可单独验证指挥台对事件的处理。
 
 ## 安装
 
@@ -105,7 +125,7 @@ Claude 需要知道"派活要通过指挥台"。把 [`docs/CLAUDE.example.md`](d
 > **注意：已经开着的 Claude 会话不会自动生效。** Claude 只在会话开始时读一次全局规则。如果你在添加规则之前就开了会话，请在那个会话里说一句：
 >
 > ```text
-> 请重新读一下全局规则 %USERPROFILE%\.claude\CLAUDE.md，以后派给 Codex / agy 的活都通过 AI指挥台的 dispatch.mjs 来派。
+> 请重新读一下全局规则 %USERPROFILE%\.claude\CLAUDE.md，以后按助手名单派活，通过 AI指挥台的 dispatch.mjs 来派。
 > ```
 >
 > 或者直接新开一个会话。
@@ -185,7 +205,7 @@ Claude 需要知道"派活要通过指挥台"。把 [`docs/CLAUDE.example.md`](d
 指挥台只显示**通过 `dispatch.mjs` 派出的任务**。按顺序检查：
 
 1. **这个会话是不是在添加全局规则之前开的？** 是的话，按上面「让 Claude 学会用它」里的提示，让它重读一次规则，或者新开一个会话
-2. **Claude 是不是直接调用了 Codex / agy？** 如果它没有用 `dispatch.mjs`，指挥台就不知道这个任务。提醒它："派活请通过 AI指挥台"
+2. **Claude 是不是直接调用了助手程序？** 如果它没有用 `dispatch.mjs`，指挥台就不知道这个任务。提醒它："派活请通过 AI指挥台"
 3. **是不是小事？** 回答问题、改一两行这类小事，Claude 会自己直接做，不派活，指挥台也不会弹出来
 4. 想确认指挥台本身能不能打开，可以在项目文件夹里运行 `npm run ensure`
 
@@ -218,6 +238,12 @@ agy 的浏览器功能是通过 Chrome 的远程调试连接**你平时用的 Ch
 这些命令主要给 Claude 用。你一般不需要手动运行，排查问题时可能用得上。
 
 ```powershell
+# 查看助手名单；加 --json 可供程序读取
+node dispatch.mjs agents [--json]
+
+# 修改一个助手的个人设置，可以只改其中一项
+node dispatch.mjs agent-set --id <助手编号> [--enabled true|false] [--role <定位>] [--model <模型名>]
+
 # 查看最近任务的状态汇总
 node dispatch.mjs status
 
@@ -225,7 +251,7 @@ node dispatch.mjs status
 node dispatch.mjs ensure
 
 # 派活
-node dispatch.mjs run --run <任务ID> --agent codex|agy|claude --name <显示名> --task <一句话任务> `
+node dispatch.mjs run --run <任务ID> --agent <助手编号> --name <显示名> --task <一句话任务> `
   --cwd <工作目录> --prompt-file <提示文件> [--sites 域名1,域名2] [--browser] [--step N] [--readonly]
 
 # 接着对话继续 / 打开它自己的程序 / 停止
@@ -280,6 +306,9 @@ agy.exe --mode accept-edits --input-format stream-json --output-format stream-js
 
 ```
 ai指挥台/
+├── agents.default.json     助手名单和默认分工
+├── agents.cjs              读取名单、查找本机程序、保存个人设置
+├── deepseek.mjs            DeepSeek Harness 启动方式和事件翻译
 ├── dispatch.mjs            调度器：启动助手、翻译事件、检查跑偏、接着对话继续
 ├── agy-children.mjs        辨认 agy 派出的子助手、跟踪记录和回报
 ├── fold.cjs                多轮打磨时自动收起旧一轮的卡片
@@ -293,7 +322,8 @@ ai指挥台/
 │   ├── index.html
 │   └── style.css
 ├── scripts/
-│   └── create-shortcut.mjs 创建桌面快捷方式
+│   ├── create-shortcut.mjs 创建桌面快捷方式
+│   └── try-deepseek.ps1    沙箱外只读试跑，采集 DeepSeek 真实回包
 ├── docs/
 │   ├── CLAUDE.example.md   给 Claude 的全局规则模板
 │   └── *.png               截图

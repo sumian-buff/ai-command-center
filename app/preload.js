@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('console2', {
+  listAgents: () => ipcRenderer.invoke('agents:list'),
+  setAgent: (id, patch) => ipcRenderer.invoke('agents:set', { id, patch }),
   listRuns: () => ipcRenderer.invoke('runs:list'),
   getRun: (id) => ipcRenderer.invoke('run:get', id),
   stopAgent: (run, name) => ipcRenderer.invoke('agent:stop', { run, name }),

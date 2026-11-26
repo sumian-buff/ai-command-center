@@ -4,6 +4,7 @@ const { readSession } = require('./transcript');
 const { diagnose, includeChildActivity } = require('./diagnose');
 const { markAgentDone } = require('../mark-done.cjs');
 const { foldedNames, setFolded } = require('../fold.cjs');
+const { listAgents, setAgent } = require('../agents.cjs');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
@@ -66,7 +67,7 @@ function loadAgents(runDir) {
     const rawFile = path.join(d, 'raw.log');
     const events = readLines(eventsFile).slice(-300);
     const updated = mtime(eventsFile);
-    if (meta.agent === 'agy' && meta.parent) {
+    if ((meta.kind || meta.agent) === 'agy' && meta.parent) {
       return { ...meta, events, rawMtime: mtime(rawFile), _mtime: Math.max(updated, Date.parse(meta.lastActivityAt) || 0) };
     }
     let result = '';
@@ -76,9 +77,19 @@ function loadAgents(runDir) {
   return includeChildActivity(agents);
 }
 
-function loadRun(id) {
+function loadRun(id, withVendorInfo = true) {
   const dir = path.join(RUNS, id);
   const agents = loadAgents(dir);
+  if (withVendorInfo) {
+    // 只有打开的任务需要卡片信息。任务列表和通知轮询不用逐个任务查找程序。
+    let registry = [];
+    try { registry = listAgents(); } catch { /* 名单配置出错时仍然可以查看历史。 */ }
+    const vendors = new Map(registry.map(({ id, name, color, icon }) => [id, { name, color, icon }]));
+    for (const agent of agents) {
+      const id = agent.agent === 'claude-session' ? 'claude' : agent.agent;
+      agent.vendorInfo = vendors.get(id) || { name: id || '助手', color: '#64748b', icon: 'AI' };
+    }
+  }
   // 旧一轮用完的卡片收起来（规则见 fold.cjs）
   const folded = foldedNames(agents);
   for (const a of agents) a.folded = folded.has(a.parent || a.name);
@@ -110,7 +121,7 @@ function listRuns() {
   let ids = [];
   try { ids = fs.readdirSync(RUNS).filter((n) => fs.statSync(path.join(RUNS, n)).isDirectory()); } catch { return []; }
   return ids.map((id) => {
-    const r = loadRun(id);
+    const r = loadRun(id, false);
     const times = [mtime(path.join(RUNS, id, 'plan.json')), mtime(path.join(RUNS, id, 'notes.jsonl')), ...r.agents.map((a) => a._mtime)];
     const running = r.agents.some((a) => a.status === 'running');
     const attention = r.agents.some((a) => a.status === 'blocked' || a.status === 'question' || (a.status === 'running' && a.warnings > 0));
@@ -198,7 +209,7 @@ async function restartAgent(run, name) {
 function stopAgent(run, name) {
   const d = path.join(RUNS, run, 'agents', name);
   const meta = readJSON(path.join(d, 'meta.json'), {});
-  if (meta.agent === 'agy') {
+  if (['agy', 'dsh'].includes(meta.kind || meta.agent)) {
     return new Promise((res) => execFile('node', [path.join(ROOT, 'dispatch.mjs'), 'stop', '--run', run, '--name', name], { cwd: ROOT, windowsHide: true }, (err) => res(!err)));
   }
   try { fs.writeFileSync(path.join(d, 'stop.flag'), new Date().toISOString()); } catch {}
@@ -280,6 +291,11 @@ app.whenReady().then(() => {
   fs.mkdirSync(RUNS, { recursive: true });
   ipcMain.handle('runs:list', () => listRuns());
   ipcMain.handle('run:get', (_e, id) => loadRun(id));
+  ipcMain.handle('agents:list', () => listAgents());
+  ipcMain.handle('agents:set', (_e, data) => {
+    try { setAgent(data?.id, data?.patch); return ''; }
+    catch (err) { return err.message; }
+  });
   ipcMain.handle('agent:stop', (_e, { run, name }) => stopAgent(run, name));
   ipcMain.handle('agent:mark-done', (_e, { run, name }) => {
     try { markAgentDone(RUNS, run, name); return ''; }

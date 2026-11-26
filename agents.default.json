@@ -1,0 +1,56 @@
+[
+  {
+    "id": "codex",
+    "name": "Codex",
+    "kind": "codex",
+    "color": "#1C727E",
+    "icon": "</>",
+    "enabled": true,
+    "role": "程序代码主体、质量要求高的开发",
+    "command": "%APPDATA%/npm/node_modules/@openai/codex/bin/codex.js"
+  },
+  {
+    "id": "agy",
+    "name": "Antigravity",
+    "kind": "agy",
+    "color": "#C96B27",
+    "icon": "◎",
+    "enabled": true,
+    "role": "多面手，审美、设计、前端界面、生图、浏览网页；适合做项目的审美复核和进度监督",
+    "command": "%LOCALAPPDATA%/agy/bin/agy.exe"
+  },
+  {
+    "id": "claude",
+    "name": "Claude",
+    "kind": "claude",
+    "color": "#3B7A57",
+    "icon": "✳",
+    "enabled": true,
+    "role": "总负责人，负责需要居中调度和思考的事，把项目补全完善直到运营上线",
+    "command": [
+      "%APPDATA%/npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+      "%USERPROFILE%/.local/bin/claude.exe"
+    ]
+  },
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "kind": "dsh",
+    "color": "#4169D8",
+    "icon": "DS",
+    "enabled": true,
+    "role": "不重要但很耗额度的内容、能力要求不高的简单重复任务，或与 DeepSeek 自身特点相关、直接用它效果更好的内容；程序主体代码一般不交给它",
+    "command": "D:/DeepSeek-Harness/resources/runtime/cli/bin/dsh.cmd"
+  },
+  {
+    "id": "grok",
+    "name": "Grok Bot",
+    "kind": "desktop",
+    "color": "#444B58",
+    "icon": "G",
+    "enabled": false,
+    "role": "只有桌面程序，暂时不能派活",
+    "reason": "只有桌面程序，暂无官方命令行，不能无人值守派活",
+    "command": "%LOCALAPPDATA%/Programs/Grok Bot/Grok Bot.exe"
+  }
+]
