@@ -1,0 +1,6 @@
+# AI指挥台启动 DeepSeek headless 时附加的覆盖层（不改用户自己的 DeepSeek 配置）。
+# headless 预设默认关闭了读取已保存密钥的组件，这里把它打开，
+# 让后台模式使用用户在 DeepSeek Harness「设置 → 模型」里保存的 API 密钥。
+- id: credentials
+  name: "@deepseek-ai/dsh-credentials-local"
+  disabled: false

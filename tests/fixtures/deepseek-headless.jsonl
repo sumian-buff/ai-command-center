@@ -1,0 +1,8 @@
+{"type":"session","sessionId":"session-00000000-0000-4000-8000-000000000000","cwd":"<测试目录>"}
+{"type":"status","phase":"turn_start","turn":1}
+{"type":"status","phase":"step_start","turn":1,"step":1}
+{"type":"thinking","text":"<已省略推理文字>"}
+{"type":"text","text":"AICC-DSH-OK"}
+{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":674,"outputTokens":7,"totalTokens":6569,"cacheReadTokens":5888,"cacheWriteTokens":0}}
+{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}
+{"type":"final","sessionId":"session-00000000-0000-4000-8000-000000000000","reason":{"kind":"completed"},"text":"AICC-DSH-OK"}

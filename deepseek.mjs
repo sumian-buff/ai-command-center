@@ -1,7 +1,10 @@
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { dshPaths } from './agents.cjs';
 
 // Mirror the installed dsh.cmd without putting the prompt or paths through cmd.exe.
+const DSH_PATCH = fileURLToPath(new URL('./dsh-headless.patch.yml', import.meta.url));
+
 export function deepseekSpec(command, meta, message, resume = false) {
   if (meta.model) {
     throw new Error('DeepSeek 的 headless 命令没有单次选模型参数。请在 DeepSeek Harness 的 headless 设置中选择模型，并清空指挥台里的 DeepSeek 模型。');
@@ -11,7 +14,8 @@ export function deepseekSpec(command, meta, message, resume = false) {
   if (resume && !meta.convId) throw new Error('没有 DeepSeek 对话编号，无法继续。');
 
   const { exe, cli } = dshPaths(command);
-  const args = ['--expose-internals', cli, '--profile', 'headless', '--json'];
+  // 附加覆盖层：打开 headless 默认关闭的密钥读取组件（见 dsh-headless.patch.yml）
+  const args = ['--expose-internals', cli, '--profile', 'headless', '--patch', DSH_PATCH, '--json'];
   if (resume) args.push('--session-id', meta.convId);
   // Harness defines "never" as denying calls that need human approval.
   args.push('--permission-mode', mode, '--approval-policy', 'never');

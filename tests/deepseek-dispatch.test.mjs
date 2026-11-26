@@ -19,7 +19,7 @@ function packets(file) {
 function setup(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aicc dsh-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
-  for (const file of fs.readdirSync(repo).filter((f) => /\.[cm]js$/.test(f))) {
+  for (const file of fs.readdirSync(repo).filter((f) => /\.[cm]js$|^dsh-headless\.patch\.yml$/.test(f))) {
     fs.copyFileSync(path.join(repo, file), path.join(root, file));
   }
   const install = path.join(root, '模拟安装');
@@ -70,7 +70,7 @@ test('DeepSeek 离线调度：按只读权限从标准输入接收任务，接�
   assert.equal(resumed.code, 0, resumed.output);
   const [start, next] = h.wire();
   const cli = path.join(h.resources, 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
-  const prefix = ['--expose-internals', cli, '--profile', 'headless', '--json'];
+  const prefix = ['--expose-internals', cli, '--profile', 'headless', '--patch', path.join(h.root ?? path.dirname(cli), 'dsh-headless.patch.yml'), '--json'];
   const permission = ['--permission-mode', 'read-only', '--approval-policy', 'never', '-'];
   assert.deepEqual(start.args, [...prefix, ...permission]);
   assert.deepEqual(next.args, [...prefix, '--session-id', sessionId, ...permission]);

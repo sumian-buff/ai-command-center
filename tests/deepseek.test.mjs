@@ -28,9 +28,9 @@ test('DeepSeek 直接启动 exe，通过 stdin 保留中文，引号、模型与
   assert.equal(start.env.ELECTRON_RUN_AS_NODE, '1');
   assert.equal(start.stdin, prompt);
   assert.deepEqual(start.args, ['--expose-internals', path.join(root, 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js'),
-    '--profile', 'headless', '--json', '--permission-mode', 'workspace-write', '--approval-policy', 'never', '--add-dir', meta.addDirs[0], '-']);
+    '--profile', 'headless', '--patch', path.resolve('dsh-headless.patch.yml'), '--json', '--permission-mode', 'workspace-write', '--approval-policy', 'never', '--add-dir', meta.addDirs[0], '-']);
   const resume = deepseekSpec(command, { ...meta, sandbox: 'read-only' }, prompt, true);
-  assert.deepEqual(resume.args.slice(5), ['--session-id', meta.convId, '--permission-mode', 'read-only', '--approval-policy', 'never', '--add-dir', meta.addDirs[0], '-']);
+  assert.deepEqual(resume.args.slice(7), ['--session-id', meta.convId, '--permission-mode', 'read-only', '--approval-policy', 'never', '--add-dir', meta.addDirs[0], '-']);
   assert.throws(() => deepseekSpec(command, {}, prompt, true), /编号/);
   assert.throws(() => deepseekSpec(command, { model: 'other' }, prompt), /模型/);
   assert.throws(() => deepseekSpec(command, { sandbox: 'danger-full-access' }, prompt), /只读/);
