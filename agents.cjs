@@ -7,6 +7,9 @@ const archiveFs = process.versions.electron ? require('original-fs') : fs;
 
 const kinds = new Set(['codex', 'agy', 'claude', 'dsh', 'desktop']);
 const editable = new Set(['enabled', 'role', 'model']);
+const customFields = new Set(['id', 'name', 'kind', 'color', 'icon', 'role', 'enabled', 'command',
+  'args', 'input', 'resumeArgs', 'sessionPattern', 'output', 'env']);
+const reservedId = /^(claude-session|con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
 
@@ -22,7 +25,7 @@ function readEntries(root, file, optional = false) {
   const ids = new Set();
   for (const entry of entries) {
     if (!isObject(entry) || !hasText(entry.id) || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(entry.id)
-        || /^(claude-session|con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(entry.id)) {
+        || reservedId.test(entry.id)) {
       throw new Error(`${file} 有无效的助手编号，请使用字母、数字、横线或下划线，并避开保留名称。`);
     }
     const key = entry.id.toLowerCase();
@@ -42,6 +45,51 @@ function validatePatch(patch) {
   }
 }
 
+function validateEnv(env) {
+  if (Object.prototype.toString.call(env) !== '[object Object]') throw new Error('env 请填写普通环境变量的名称和值。');
+  const secretName = /(?:api_?key|access_?key|private_?key|password|passwd|secret|credential|authorization|(?:^|_)token(?:_|$)|cookie)/i;
+  const secretValue = /-----BEGIN [A-Z ]*PRIVATE KEY-----|^Bearer\s+\S+|^sk-[a-z0-9_-]{16,}/i;
+  for (const [name, value] of Object.entries(env)) {
+    if (!/^[a-z_][a-z0-9_]*$/i.test(name) || typeof value !== 'string' || value.includes('\0')) {
+      throw new Error('env 名称只能使用字母、数字和下划线，值请填写文字。');
+    }
+    if (secretName.test(name) || secretValue.test(value)) throw new Error('请让命令行工具自己保存密钥和登录信息，env 只填写普通设置。');
+  }
+}
+
+function customDefinition(def) {
+  if (!isObject(def)) throw new Error('请填写自定义助手的设置。');
+  for (const field of Object.keys(def)) {
+    if (!customFields.has(field)) throw new Error(`自定义助手没有「${field}」这个设置。`);
+  }
+  const entry = { kind: 'command', enabled: true, role: '自定义命令行助手', color: '#64748b', icon: 'AI',
+    input: 'stdin', output: 'text', args: [], ...def };
+  if (!hasText(entry.id) || !/^[a-z0-9][a-z0-9-]*$/.test(entry.id) || reservedId.test(entry.id)) {
+    throw new Error('自定义助手编号请使用小写字母、数字和短横线，以字母或数字开头，并避开保留名称。');
+  }
+  if (entry.kind !== 'command') throw new Error('自定义助手的 kind 请填写 command。');
+  if (!hasText(entry.name)) throw new Error('name 请填写助手的显示名。');
+  if (!hasText(entry.command) || entry.command.includes('\0')) throw new Error('command 请填写程序路径或 PATH 中的命令名。');
+  if (typeof entry.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(entry.color)) throw new Error('color 请填写 # 开头的六位颜色。');
+  if (!hasText(entry.icon) || /<[a-z]/i.test(entry.icon)) throw new Error('icon 请填写简短的图标文字或符号。');
+  validatePatch({ enabled: entry.enabled, role: entry.role });
+  if (!['stdin', 'arg'].includes(entry.input)) throw new Error('input 请填写 stdin 或 arg。');
+  if (!['text', 'jsonl'].includes(entry.output)) throw new Error('output 请填写 text 或 jsonl。');
+  for (const field of ['args', 'resumeArgs']) {
+    if (!(field in entry)) continue;
+    if (!Array.isArray(entry[field]) || !Array.from(entry[field]).every(arg => typeof arg === 'string' && !arg.includes('\0'))) {
+      throw new Error(`${field} 请填写字符串数组，每个参数单独一项。`);
+    }
+  }
+  if ('sessionPattern' in entry) {
+    if (!hasText(entry.sessionPattern)) throw new Error('sessionPattern 请填写匹配对话编号的正则表达式。');
+    try { new RegExp(entry.sessionPattern); }
+    catch { throw new Error('sessionPattern 的正则表达式无效，请检查括号和转义。'); }
+  }
+  if ('env' in entry) validateEnv(entry.env);
+  return entry;
+}
+
 function readRegistry(root) {
   const defaults = readEntries(root, 'agents.default.json');
   for (const entry of defaults) {
@@ -52,13 +100,18 @@ function readRegistry(root) {
     }
     validatePatch({ enabled: entry.enabled, role: entry.role, model: entry.model === undefined ? '' : entry.model });
   }
-  const overrides = new Map();
+  const local = new Map();
   for (const { id, ...patch } of readEntries(root, 'agents.local.json', true)) {
-    if (!defaults.some((entry) => entry.id === id)) throw new Error(`本地设置里的助手「${id}」不在默认名单中。`);
-    validatePatch(patch);
-    overrides.set(id, patch);
+    const builtin = defaults.find(entry => entry.id.toLowerCase() === id.toLowerCase());
+    if (builtin) {
+      if (builtin.id !== id) throw new Error(`本地设置请使用内置助手原有的编号「${builtin.id}」。`);
+      validatePatch(patch);
+      local.set(id, { id, ...patch });
+    } else {
+      local.set(id, customDefinition({ id, ...patch }));
+    }
   }
-  return { defaults, overrides };
+  return { defaults, local };
 }
 
 // 与官方 dsh.cmd 的相对路径一致。普通 Node 进程只能直接检查 app.asar 档案。
@@ -77,7 +130,32 @@ function isFile(file, disk = fs) {
   catch { return false; }
 }
 
+function findCustomCommand(command, root) {
+  const name = command.replace(/%([^%]+)%/g, (match, key) => process.env[key] ?? match);
+  const explicitPath = path.isAbsolute(name) || /[/\\]/.test(name);
+  const dirs = explicitPath ? [root] : (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  let suffixes = [''];
+  if (process.platform === 'win32' && !/\.(exe|com|bat|cmd)$/i.test(name)) {
+    // npm 在 PATH 里同时放无扩展名的 Unix 脚本和 Windows 启动器。
+    const pathExt = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
+    suffixes = pathExt.split(';').filter(ext => /^\.(com|exe|bat|cmd)$/i.test(ext));
+    if (explicitPath) suffixes.push('');
+  }
+  for (const dir of dirs) {
+    for (const suffix of suffixes) {
+      const candidate = path.resolve(dir.replace(/^"(.*)"$/, '$1'), name + suffix);
+      if (!isFile(candidate)) continue;
+      if (process.platform !== 'win32') {
+        try { fs.accessSync(candidate, fs.constants.X_OK); } catch { continue; }
+      }
+      return candidate;
+    }
+  }
+  return null;
+}
+
 function findCommand(entry, root) {
+  if (entry.kind === 'command') return findCustomCommand(entry.command, root);
   for (const candidate of [].concat(entry.command)) {
     const expanded = candidate.replace(/%([^%]+)%/g, (match, key) => process.env[key] || match);
     if (/%[^%]+%/.test(expanded)) continue;
@@ -93,11 +171,25 @@ function findCommand(entry, root) {
 }
 
 function listAgents(root = __dirname) {
-  const { defaults, overrides } = readRegistry(root);
-  return defaults.map((entry) => {
+  const { defaults, local } = readRegistry(root);
+  const entries = defaults.map(entry => ({ ...entry, ...local.get(entry.id) }));
+  entries.push(...Array.from(local.values()).filter(entry => entry.kind === 'command'));
+  return entries.map((entry) => {
+    const custom = entry.kind === 'command';
+    const capabilities = { resume: custom ? Array.isArray(entry.resumeArgs) : entry.kind !== 'desktop',
+      tokens: !custom && entry.kind !== 'desktop' };
     const resolvedCommand = findCommand(entry, root);
-    return { ...entry, ...overrides.get(entry.id), found: resolvedCommand !== null, resolvedCommand };
+    return { ...entry, custom, capabilities, found: resolvedCommand !== null, resolvedCommand };
   });
+}
+
+function commandResumeNotice(agent, convId) {
+  if (agent.kind !== 'command') return '';
+  if (!agent.resumeArgs) return '这个助手没有设置接着对话的参数，请重新派活。';
+  if (!convId && agent.resumeArgs.some(arg => arg.includes('{session}'))) {
+    return '这个助手还没有提供对话编号，请检查会话编号的匹配规则，或重新派活。';
+  }
+  return '';
 }
 
 // 临时目录先放入进程编号再原子改名。中途退出时，下一个写入者只会清理已退出进程的锁。
@@ -144,18 +236,15 @@ function acquireLock(root) {
   }
 }
 
-function setAgent(id, patch, root = __dirname) {
-  validatePatch(patch);
+function updateLocal(root, update) {
   const local = path.join(root, 'agents.local.json');
   const tmp = local + '.' + process.pid + '.tmp';
   try {
     const release = acquireLock(root);
     try {
-      const { defaults, overrides } = readRegistry(root);
-      if (!defaults.some((entry) => entry.id === id)) throw new Error(`助手名单中没有「${id}」。`);
-      overrides.set(id, { ...overrides.get(id), ...patch });
-      const entries = Array.from(overrides, ([id, values]) => ({ id, ...values }));
-      fs.writeFileSync(tmp, JSON.stringify(entries, null, 2) + '\n');
+      const registry = readRegistry(root);
+      update(registry);
+      fs.writeFileSync(tmp, JSON.stringify(Array.from(registry.local.values()), null, 2) + '\n');
       fs.renameSync(tmp, local);
     } finally {
       try { fs.rmSync(tmp, { force: true }); } finally { release(); }
@@ -165,4 +254,31 @@ function setAgent(id, patch, root = __dirname) {
   }
 }
 
-module.exports = { listAgents, setAgent, dshPaths };
+function setAgent(id, patch, root = __dirname) {
+  validatePatch(patch);
+  updateLocal(root, ({ defaults, local }) => {
+    if (!local.has(id) && !defaults.some(entry => entry.id === id)) throw new Error(`助手名单中没有「${id}」。`);
+    if (local.get(id)?.kind === 'command' && 'model' in patch) {
+      throw new Error('请在自定义工具的启动参数或工具自己的设置里选择模型。');
+    }
+    local.set(id, { id, ...local.get(id), ...patch });
+  });
+}
+
+function addCustomAgent(def, root = __dirname) {
+  const entry = customDefinition(def);
+  updateLocal(root, ({ defaults, local }) => {
+    if (defaults.some(({ id }) => id.toLowerCase() === entry.id)) throw new Error(`「${entry.id}」是内置助手的编号，请换一个编号。`);
+    if (local.has(entry.id)) throw new Error(`名单中已有「${entry.id}」，请换一个编号。`);
+    local.set(entry.id, entry);
+  });
+}
+
+function removeCustomAgent(id, root = __dirname) {
+  updateLocal(root, ({ defaults, local }) => {
+    if (defaults.some(entry => entry.id === id)) throw new Error('内置助手只能关闭，请使用名单里的开关。');
+    if (!local.delete(id)) throw new Error(`助手名单中没有「${id}」。`);
+  });
+}
+
+module.exports = { listAgents, setAgent, dshPaths, addCustomAgent, removeCustomAgent, commandResumeNotice };

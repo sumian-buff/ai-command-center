@@ -25,8 +25,9 @@ import { fileURLToPath } from 'node:url';
 import { createAgyChildren, stopAgyChildren } from './agy-children.mjs';
 import { alive, markAgentDone } from './mark-done.cjs';
 import { foldedNames, setFolded } from './fold.cjs';
-import { listAgents, setAgent } from './agents.cjs';
+import { listAgents, setAgent, addCustomAgent, removeCustomAgent, commandResumeNotice } from './agents.cjs';
 import { deepseekSpec, createDeepseekEvents, deepseekBlockReason } from './deepseek.mjs';
+import { commandSpec, createCommandEvents } from './command.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const RUNS = path.join(ROOT, 'runs');
@@ -99,7 +100,7 @@ function buildPrompt(agent, userPrompt, sites) {
     // 每次新连接 Chrome，Chrome 都会弹「允许远程调试」窗口（Chrome 的安全设计，关不掉），所以要少连、别反复重连
     lines.push('10. 每连接一次 Chrome，用户都要在 Chrome 弹窗里点一次「允许」，所以要尽量少连接：整个任务尽量只派一个浏览器子代理，后续步骤用 send_message 继续给同一个子代理下指令，不要每一步都新开子代理。不要在网页里运行脚本（evaluate_script 在无人值守模式下会被拒绝，子代理会因此失败），用页面快照、点击、填写、上传文件这类普通操作代替。连不上 Chrome 或连接超时时不要反复重试：以「被阻碍：」开头说明「请看一下 Chrome 有没有弹出允许远程调试的窗口，点允许后让我继续」，然后结束。');
   }
-  if (agent === 'codex' || agent === 'dsh') lines.push('7. 不要执行 git commit / git push，提交由 Claude 负责。');
+  if (['codex', 'dsh', 'command'].includes(agent)) lines.push('7. 不要执行 git commit / git push，提交由 Claude 负责。');
   if (agent === 'claude') lines.push('7. 你是被派出来干活的助手：自己完成任务，不要再把活派给其他 agent，不要使用 AI指挥台的 dispatch.mjs，不要执行 git commit / git push。');
   return lines.join('\n') + '\n\n【任务】\n' + userPrompt;
 }
@@ -199,8 +200,7 @@ function listedAgent(id) {
   return agent;
 }
 
-function runnableAgent(id, previousKind) {
-  const agent = listedAgent(id);
+function runnableAgent(agent, previousKind) {
   if (agent.kind === 'desktop') throw new Error(`${agent.name} 只有桌面程序，暂无官方命令行，不能无人值守派活。`);
   if (!agent.enabled) throw new Error(`${agent.name} 已关闭。如需派活，请先在助手名单中开启它。`);
   if (!agent.found) throw new Error(`找不到 ${agent.name} 的启动程序，请检查安装位置和助手名单中的 command。`);
@@ -223,7 +223,7 @@ function ensureConsole() {
 }
 
 // ---------- 运行一个助手进程，翻译事件，结束后定状态 ----------
-async function runAgent(run, name, spec, browserSetup = false) {
+async function runAgent(run, name, spec, agent, browserSetup = false) {
   const dir = agentDir(run, name);
   const eventsFile = path.join(dir, 'events.jsonl');
   const metaFile = path.join(dir, 'meta.json');
@@ -255,7 +255,8 @@ async function runAgent(run, name, spec, browserSetup = false) {
   const checkWrite = (p, report = emit) => {
     if (!p) return;
     const abs = path.resolve(cwd, String(p));
-    if (!abs.toLowerCase().startsWith(cwd.toLowerCase())) report('warn', `改动了任务文件夹以外的文件：${abs}`);
+    const relative = path.relative(cwd, abs);
+    if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) report('warn', `改动了任务文件夹以外的文件：${abs}`);
   };
   const addTokens = (n) => { meta.tokens = (meta.tokens || 0) + (n || 0); writeJSON(metaFile, meta); };
 
@@ -279,7 +280,8 @@ async function runAgent(run, name, spec, browserSetup = false) {
   const setConv = (id) => { if (id && meta.convId !== id) { meta.convId = id; writeJSON(metaFile, meta); } };
 
   const child = spawn(spec.exe, spec.args, {
-    cwd, stdio: [spec.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'], windowsHide: true, env: spec.env || process.env,
+    cwd, stdio: [spec.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'], windowsHide: true,
+    windowsVerbatimArguments: spec.windowsVerbatimArguments, env: spec.env || process.env,
   });
   let lastError = '';
   const kind = meta.kind || meta.agent;
@@ -474,21 +476,26 @@ async function runAgent(run, name, spec, browserSetup = false) {
   };
 
   const dsh = kind === 'dsh' ? createDeepseekEvents({ emit, raw, setConv, addTokens, checkWrite, checkUrl, describeCommand }) : null;
+  const custom = kind === 'command' ? createCommandEvents(agent, { emit, raw, setConv, checkWrite, checkUrl }) : null;
   const parser = { codex: onCodex, agy: onAgy, claude: onClaude, dsh: dsh?.onEvent }[kind];
-  const rl = readline.createInterface({ input: child.stdout });
+  const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
   rl.on('line', (line) => {
-    line = line.trim();
-    if (!line.startsWith('{')) { if (dsh) raw(line); return; }
-    let ev; try { ev = JSON.parse(line); } catch { if (dsh) raw(line); return; }
-    try { parser(ev); } catch (e) {
+    try {
+      if (custom) { custom.onLine(line); return; }
+      line = line.trim();
+      if (!line.startsWith('{')) { if (dsh) raw(line); return; }
+      let ev; try { ev = JSON.parse(line); } catch { if (dsh) raw(line); return; }
+      parser(ev);
+    } catch (e) {
       const reason = `解析事件出错：${e.message}`;
-      if (dsh) lastError = reason;
+      if (dsh || custom) lastError = reason;
       emit('error', reason);
     }
   });
   let stderr = '';
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (d) => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-20000); });
+  if (custom) readline.createInterface({ input: child.stderr, crlfDelay: Infinity }).on('line', raw);
 
   const code = await new Promise((res) => { child.on('close', res); child.on('error', (e) => { lastError = e.message; res(-1); }); });
   await new Promise((r) => setTimeout(r, 200)); // 等最后几行读完
@@ -496,6 +503,16 @@ async function runAgent(run, name, spec, browserSetup = false) {
 
   // 被用户停止后，记录可能被其他进程改过，重新读一次合并
   const stopped = fs.existsSync(stopFlag);
+  if (custom) {
+    finalText = custom.finalText;
+    lastError = custom.error || lastError;
+    meta.childPid = null;
+    if (!stopped && (lastError || code !== 0)) {
+      lastError ||= stderr.trim() || `程序提前退出（${code ?? '被中断'}）。`;
+      if (/^(?:被阻碍|需要你选择)[:：]/.test(stderr.trim())) finalText = stderr.trim();
+      finalText ||= lastError;
+    }
+  }
   let dshBlock = '';
   if (dsh) {
     if (stderr.trim()) raw(stderr.trim());
@@ -519,12 +536,13 @@ async function runAgent(run, name, spec, browserSetup = false) {
     const reason = '被阻碍：agy 已返回本轮结果，但以下子助手仍在运行，尚未收到回报：' + unfinished.join('、');
     finalText = finalText ? reason + '\n\n' + finalText : reason;
   }
-  const blocked = /被阻碍[:：]/.test(finalText);
+  const blocked = (custom ? /^\s*被阻碍[:：]/m : /被阻碍[:：]/).test(finalText);
   const options = parseChoices(finalText);
+  const acceptReply = custom || (code === 0 && (!dsh || !lastError));
   if (stopped) meta.status = 'stopped';
   else if (missingReports || dshBlock) meta.status = 'blocked';
-  else if (code === 0 && (!dsh || !lastError) && blocked) meta.status = 'blocked';
-  else if (code === 0 && (!dsh || !lastError) && options.length) meta.status = 'question';
+  else if (acceptReply && blocked) meta.status = 'blocked';
+  else if (acceptReply && options.length) meta.status = 'question';
   else if (code === 0 && !lastError) meta.status = 'done';
   else meta.status = 'failed';
   if (children) {
@@ -538,6 +556,11 @@ async function runAgent(run, name, spec, browserSetup = false) {
   }
   meta.options = meta.status === 'question' ? options : [];
   meta.endedAt = now();
+  if (custom && meta.status === 'failed' && lastError) {
+    const detail = short(lastError, 2000);
+    if (!finalText.includes(detail)) finalText += '\n\n' + detail;
+    if (!custom.error) emit('error', detail);
+  }
   if (!finalText && stderr.trim()) finalText = '（没有拿到回复，错误信息如下）\n' + short(stderr.trim(), 2000);
   if (isAgy && !finalText && lastError) finalText = lastError;
   fs.writeFileSync(path.join(dir, 'result.md'), finalText || '（没有回复）');
@@ -547,11 +570,14 @@ async function runAgent(run, name, spec, browserSetup = false) {
   let evText = label;
   if (meta.status === 'blocked') evText += '：' + short(finalText.replace(/^[\s\S]*?被阻碍[:：]/, '').trim(), 160);
   if (meta.status === 'question') evText += '：' + options.map((o, i) => `${i + 1}. ${o}`).join('；');
+  const usage = custom ? COMMAND_USAGE_NOTICE : `累计约 ${meta.tokens || 0} token`;
+  const resumeNotice = custom && commandResumeNotice(agent, meta.convId);
+  if (resumeNotice) appendLine(eventsFile, { ts: now(), type: 'say', text: resumeNotice });
   emit(evType, evText);
   meta.current = label;
   writeJSON(metaFile, meta);
 
-  console.log(`【${name}】${label}｜累计约 ${meta.tokens || 0} token｜跑偏提醒 ${meta.warnings || 0} 次｜对话编号 ${meta.convId || '无'}`);
+  console.log(`【${name}】${label}｜${usage}｜跑偏提醒 ${meta.warnings || 0} 次｜${resumeNotice || '对话编号 ' + (meta.convId || '无')}`);
   console.log(finalText);
   return meta.status;
 }
@@ -560,12 +586,19 @@ async function runAgent(run, name, spec, browserSetup = false) {
 async function dispatchTurn(run, meta, agent, message, spec) {
   const command = agent.resolvedCommand;
   if (agent.kind === 'agy' && meta.browser) {
-    const status = await runAgent(run, meta.name, agyStream(command, '/browser', meta.convId, meta.model), true);
+    const status = await runAgent(run, meta.name, agyStream(command, '/browser', meta.convId, meta.model), agent, true);
     if (status !== 'ready') return status;
     meta = readJSON(path.join(agentDir(run, meta.name), 'meta.json'), null);
     spec = agyStream(command, message, meta.convId, meta.model);
   }
-  return runAgent(run, meta.name, spec);
+  return runAgent(run, meta.name, spec, agent);
+}
+
+const COMMAND_USAGE_NOTICE = '这个助手不提供 token 用量统计';
+
+function turnSpec(agent, meta, message, resume) {
+  if (agent.kind === 'command') return commandSpec(agent, meta, message, resume);
+  return adapters[agent.kind](agent.resolvedCommand, meta, message, resume);
 }
 
 // ---------- 命令：run ----------
@@ -575,7 +608,7 @@ async function cmdRun(a) {
     console.error('用法：node dispatch.mjs run --run <任务ID> --agent <名单中的助手ID> --prompt-file <文件> [--name 显示名] [--task 任务] [--cwd 目录] [--sites 域名] [--step N] [--readonly] [--network] [--add-dir 目录] [--model 模型] [--path-add 目录] [--approve-for-me]');
     process.exit(2);
   }
-  const agent = runnableAgent(String(a.agent));
+  const agent = runnableAgent(listedAgent(String(a.agent)));
   const { id, kind } = agent;
   const name = String(a.name || id);
   const dir = agentDir(run, name);
@@ -600,7 +633,12 @@ async function cmdRun(a) {
   }
   if (kind === 'codex' && a['path-add']) meta.pathAdd = String(a['path-add']).split(',').map((d) => path.resolve(d.trim())).filter(Boolean);
   if ((kind === 'codex' || kind === 'dsh') && a['add-dir']) meta.addDirs = String(a['add-dir']).split(',').map((d) => d.trim()).filter(Boolean).map((d) => path.resolve(d));
-  const spec = adapters[kind](agent.resolvedCommand, meta, prompt, false);
+  if (agent.custom) {
+    meta.capabilities = agent.capabilities;
+    meta.vendorInfo = { name: agent.name, color: agent.color, icon: agent.icon };
+    meta.tokens = null;
+  }
+  const spec = turnSpec(agent, meta, prompt, false);
   ensureConsole();
   fs.mkdirSync(dir, { recursive: true });
   fs.rmSync(path.join(dir, 'stop.flag'), { force: true });
@@ -609,6 +647,7 @@ async function cmdRun(a) {
   try { fs.unlinkSync(path.join(dir, 'result.md')); } catch {}
   writeJSON(path.join(dir, 'meta.json'), meta);
   appendLine(path.join(dir, 'events.jsonl'), { ts: now(), type: 'act', text: `接到任务：${meta.task || '（未命名）'}` });
+  if (agent.custom) appendLine(path.join(dir, 'events.jsonl'), { ts: now(), type: 'say', text: COMMAND_USAGE_NOTICE + '。' });
   const status = await dispatchTurn(run, meta, agent, prompt, spec);
   process.exit(status === 'done' ? 0 : 1);
 }
@@ -621,9 +660,18 @@ async function cmdResume(a) {
   if (!meta) { console.error(`找不到助手「${name}」`); process.exit(2); }
   if (meta.parent) { console.error(`请通过主助手「${meta.parent}」继续任务。`); process.exit(2); }
   if (meta.status === 'running' && alive(meta.pid)) { console.error(`「${name}」还在运行，不能同时继续。`); process.exit(2); }
-  if (!meta.convId) { console.error(`「${name}」没有对话编号，无法继续。`); process.exit(2); }
+  if (meta.kind !== 'command' && !meta.convId) { console.error(`「${name}」没有对话编号，无法继续。`); process.exit(2); }
   let agent;
-  try { agent = runnableAgent(meta.agent, meta.kind || meta.agent); }
+  try {
+    agent = listedAgent(meta.agent);
+    const notice = commandResumeNotice(agent, meta.convId);
+    if (notice) {
+      appendLine(path.join(dir, 'events.jsonl'), { ts: now(), type: 'say', text: notice });
+      console.log(notice);
+      return;
+    }
+    runnableAgent(agent, meta.kind || meta.agent);
+  }
   catch (err) {
     appendLine(path.join(dir, 'events.jsonl'), { ts: now(), type: 'error', text: err.message });
     throw err;
@@ -633,7 +681,7 @@ async function cmdResume(a) {
   // 提醒它沿用原来的工作规则
   let wrapped = msg + '\n\n（请继续遵守最开始的工作规则：每个阶段用一句中文说明；遇到阻碍以「被阻碍：」开头说明；需要选择时写「需要你选择：」并列出编号选项；最后总结。）';
   if (agent.kind === 'agy' && (meta.browser || a.browser)) wrapped += '\n（用浏览器时：每连接一次 Chrome 用户都要点一次「允许」，尽量沿用同一个浏览器子代理、用 send_message 继续下指令；不要在网页里运行脚本；连不上 Chrome 时不要反复重试，以「被阻碍：」开头请用户在 Chrome 弹窗里点允许。）';
-  const spec = adapters[agent.kind](agent.resolvedCommand, meta, wrapped, true);
+  const spec = turnSpec(agent, meta, wrapped, true);
   appendLine(path.join(dir, 'events.jsonl'), { ts: now(), type: 'user', text: `你回复：${msg}` });
   // 先占住「进行中」，避免启用浏览器那一分钟里，用户在指挥台又点一次继续
   fs.rmSync(path.join(dir, 'stop.flag'), { force: true });
@@ -650,6 +698,10 @@ function cmdOpen(a) {
   const run = String(a.run || ''), name = String(a.name || '');
   const dir = agentDir(run, name);
   const meta = readJSON(path.join(dir, 'meta.json'), null);
+  if (meta?.kind === 'command') {
+    console.log('这个助手通过命令行工作。要继续，请在指挥台回复；没有设置续聊参数时请重新派活。');
+    return;
+  }
   if (!meta || !meta.convId) { console.error('没有对话编号，无法打开。'); process.exit(2); }
   if (meta.parent) { console.error(`请打开主助手「${meta.parent}」的对话。`); process.exit(2); }
   if (meta.status === 'running' && alive(meta.pid)) { console.error(`「${name}」还在后台运行，请先停止它再打开对话窗口。`); process.exit(2); }
@@ -667,7 +719,7 @@ function cmdOpen(a) {
     return;
   }
   if (kind === 'dsh') throw new Error('要继续这段 DeepSeek 对话，请在指挥台回复或运行 resume 命令。');
-  const agent = runnableAgent(meta.agent, kind);
+  const agent = runnableAgent(listedAgent(meta.agent), kind);
   const flag = { codex: 'resume', agy: '--conversation', claude: '--resume' }[kind];
   const interactive = cliSpec(agent.resolvedCommand, [flag, meta.convId]);
   const script = [
@@ -732,7 +784,7 @@ function cmdStop(a) {
   const meta = readJSON(path.join(dir, 'meta.json'), {});
   if (meta.parent) { console.error(`请停止主助手「${meta.parent}」，它会一起停止子助手。`); process.exit(2); }
   const kind = meta.kind || meta.agent;
-  const managedStop = kind === 'agy' || kind === 'dsh';
+  const managedStop = ['agy', 'dsh', 'command'].includes(kind);
   if (managedStop && meta.status !== 'running') return;
   fs.writeFileSync(path.join(dir, 'stop.flag'), now());
   if (managedStop) {
@@ -811,10 +863,42 @@ function cmdAgents(a) {
   const agents = listAgents();
   if (a.json) { console.log(JSON.stringify(agents, null, 2)); return; }
   for (const agent of agents) {
-    console.log(`${agent.name}（${agent.id}）｜${agent.enabled ? '已开启' : '已关闭'}｜默认模型：${agent.model || '由助手决定'}｜${agent.found ? '已找到程序' : '未找到程序'}`);
+    console.log(`${agent.name}（${agent.id}）｜${agent.custom ? '自定义' : '内置'}｜${agent.enabled ? '已开启' : '已关闭'}｜默认模型：${agent.model || '由助手决定'}｜${agent.found ? '已找到程序' : '未找到程序'}`);
     console.log('  ' + agent.role);
+    if (agent.custom) console.log('  ' + (agent.capabilities.resume ? '已设置接着对话的参数。' : commandResumeNotice(agent)) + COMMAND_USAGE_NOTICE + '。');
     if (agent.kind === 'desktop') console.log('  ' + (agent.reason || '只有桌面程序，暂无官方命令行，不能无人值守派活。'));
   }
+}
+
+function cmdAgentAdd(a) {
+  const { _, 'resume-args': resumeArgs, 'session-pattern': sessionPattern, ...def } = a;
+  if (_.length !== 1 || !def.id || !def.name || !def.command) {
+    throw new Error('用法：node dispatch.mjs agent-add --id <编号> --name <显示名> --command <程序> [--args JSON数组] [--input stdin|arg] [--resume-args JSON数组] [--output text|jsonl]');
+  }
+  if (sessionPattern !== undefined) def.sessionPattern = sessionPattern;
+  if (resumeArgs !== undefined) def.resumeArgs = resumeArgs;
+  for (const field of ['args', 'resumeArgs', 'env']) {
+    if (Object.hasOwn(def, field)) {
+      try { def[field] = JSON.parse(def[field]); }
+      catch { throw new Error(`${field} 的 JSON 格式无效，请检查引号和括号。`); }
+    }
+  }
+  if (Object.hasOwn(def, 'enabled')) def.enabled = parseEnabled(def.enabled);
+  addCustomAgent(def);
+  console.log(`已添加自定义助手「${def.name}」（${def.id}）。`);
+}
+
+function cmdAgentRemove({ _, id, ...rest }) {
+  if (typeof id !== 'string' || _.length !== 1 || Object.keys(rest).length) {
+    throw new Error('用法：node dispatch.mjs agent-remove --id <自定义助手编号>');
+  }
+  removeCustomAgent(id);
+  console.log(`已从名单移除「${id}」，原有任务记录仍可查看。`);
+}
+
+function parseEnabled(value) {
+  if (!['true', 'false'].includes(value)) throw new Error('--enabled 请填写 true（开启）或 false（关闭）。');
+  return value === 'true';
 }
 
 function cmdAgentSet(a) {
@@ -822,17 +906,15 @@ function cmdAgentSet(a) {
   if (typeof id !== 'string' || !Object.keys(patch).length || _.length !== 1) {
     throw new Error('用法：node dispatch.mjs agent-set --id <助手ID> [--enabled true|false] [--role "定位"] [--model "模型"]');
   }
-  if (Object.hasOwn(patch, 'enabled')) {
-    if (!['true', 'false'].includes(patch.enabled)) throw new Error('--enabled 请填写 true（开启）或 false（关闭）。');
-    patch.enabled = patch.enabled === 'true';
-  }
+  if (Object.hasOwn(patch, 'enabled')) patch.enabled = parseEnabled(patch.enabled);
   setAgent(id, patch);
   console.log(`已保存「${id}」的助手设置。`);
 }
 
 const args = parseArgs(process.argv.slice(2));
 const cmd = args._[0];
-const commands = { agents: cmdAgents, 'agent-set': cmdAgentSet, run: cmdRun, resume: cmdResume, open: cmdOpen, stop: cmdStop,
+const commands = { agents: cmdAgents, 'agent-set': cmdAgentSet, 'agent-add': cmdAgentAdd, 'agent-remove': cmdAgentRemove,
+  run: cmdRun, resume: cmdResume, open: cmdOpen, stop: cmdStop,
   mark: cmdMark, fold: cmdFold, step: cmdStep, note: cmdNote, status: cmdStatus, brief: cmdBrief, attach: cmdAttach, ensure: ensureConsole };
 try {
   if (!Object.hasOwn(commands, cmd)) throw new Error('命令：' + Object.keys(commands).join(' | ') + '（见 README.md）');

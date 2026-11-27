@@ -4,7 +4,7 @@ const { readSession } = require('./transcript');
 const { diagnose, includeChildActivity } = require('./diagnose');
 const { markAgentDone } = require('../mark-done.cjs');
 const { foldedNames, setFolded } = require('../fold.cjs');
-const { listAgents, setAgent } = require('../agents.cjs');
+const { listAgents, setAgent, addCustomAgent, removeCustomAgent, commandResumeNotice } = require('../agents.cjs');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
@@ -84,10 +84,16 @@ function loadRun(id, withVendorInfo = true) {
     // 只有打开的任务需要卡片信息。任务列表和通知轮询不用逐个任务查找程序。
     let registry = [];
     try { registry = listAgents(); } catch { /* 名单配置出错时仍然可以查看历史。 */ }
-    const vendors = new Map(registry.map(({ id, name, color, icon }) => [id, { name, color, icon }]));
+    const vendors = new Map(registry.map(entry => [entry.id, entry]));
     for (const agent of agents) {
       const id = agent.agent === 'claude-session' ? 'claude' : agent.agent;
-      agent.vendorInfo = vendors.get(id) || { name: id || '助手', color: '#64748b', icon: 'AI' };
+      const entry = vendors.get(id);
+      agent.vendorInfo = entry ? { name: entry.name, color: entry.color, icon: entry.icon }
+        : agent.vendorInfo || { name: id || '助手', color: '#64748b', icon: 'AI' };
+      if (agent.kind === 'command') {
+        agent.capabilities = entry?.capabilities || { resume: false, tokens: false };
+        agent.resumeNotice = resumeNoticeForCard(entry, agent.convId);
+      }
     }
   }
   // 旧一轮用完的卡片收起来（规则见 fold.cjs）
@@ -157,8 +163,24 @@ function runDispatch(args) {
   const child = spawn('node', [path.join(ROOT, 'dispatch.mjs'), ...args], { cwd: ROOT, detached: true, stdio: 'ignore', windowsHide: true });
   child.unref();
 }
+function resumeNoticeForCard(entry, convId) {
+  if (!entry) return '这个自定义助手已从名单移除，请重新添加后再派活。';
+  if (!entry.enabled) return '这个助手已关闭，请在助手名单里开启后再继续。';
+  return commandResumeNotice(entry, convId);
+}
+function checkCustomReply(dir) {
+  const meta = readJSON(path.join(dir, 'meta.json'), {});
+  if (meta.kind !== 'command') return '';
+  let notice;
+  try { notice = resumeNoticeForCard(listAgents().find(a => a.id === meta.agent), meta.convId); }
+  catch (err) { notice = err.message; }
+  if (notice) fs.appendFileSync(path.join(dir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), type: 'say', text: notice }) + '\n');
+  return notice;
+}
 function replyAgent(run, name, text) {
   const d = path.join(RUNS, run, 'agents', name);
+  const notice = checkCustomReply(d);
+  if (notice) return notice;
   const f = path.join(d, `reply-${Date.now()}.txt`);
   fs.writeFileSync(f, String(text || ''), 'utf8');
   runDispatch(['resume', '--run', run, '--name', name, '--message-file', f]);
@@ -194,6 +216,8 @@ function killStuckChild(run, name) {
 }
 async function restartAgent(run, name) {
   const d = path.join(RUNS, run, 'agents', name);
+  const notice = checkCustomReply(d);
+  if (notice) return notice;
   await stopAgent(run, name);
   // 等调度器把它标记为已停止（最多 20 秒），再接着原来的对话继续
   for (let i = 0; i < 40; i++) {
@@ -209,7 +233,7 @@ async function restartAgent(run, name) {
 function stopAgent(run, name) {
   const d = path.join(RUNS, run, 'agents', name);
   const meta = readJSON(path.join(d, 'meta.json'), {});
-  if (['agy', 'dsh'].includes(meta.kind || meta.agent)) {
+  if (['agy', 'dsh', 'command'].includes(meta.kind || meta.agent)) {
     return new Promise((res) => execFile('node', [path.join(ROOT, 'dispatch.mjs'), 'stop', '--run', run, '--name', name], { cwd: ROOT, windowsHide: true }, (err) => res(!err)));
   }
   try { fs.writeFileSync(path.join(d, 'stop.flag'), new Date().toISOString()); } catch {}
@@ -292,6 +316,14 @@ app.whenReady().then(() => {
   ipcMain.handle('runs:list', () => listRuns());
   ipcMain.handle('run:get', (_e, id) => loadRun(id));
   ipcMain.handle('agents:list', () => listAgents());
+  ipcMain.handle('agents:add', (_e, def) => {
+    try { addCustomAgent(def); return ''; }
+    catch (err) { return err.message; }
+  });
+  ipcMain.handle('agents:remove', (_e, id) => {
+    try { removeCustomAgent(id); return ''; }
+    catch (err) { return err.message; }
+  });
   ipcMain.handle('agents:set', (_e, data) => {
     try { setAgent(data?.id, data?.patch); return ''; }
     catch (err) { return err.message; }

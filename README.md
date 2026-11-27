@@ -97,9 +97,53 @@ AI指挥台的做法：
 
 例如，运行 `node dispatch.mjs agent-set --id deepseek --enabled false` 可以关闭 DeepSeek，将 `false` 改为 `true` 可重新开启。用 `--role "整理重复资料"` 可以改定位。对支持按任务选模型的助手，可用 `--model "模型名"` 设置默认模型。DeepSeek 的模型由 Harness 的 `headless` 配置决定，请将它在名单中的 `model` 留空；填入模型名会收到提示。初始名单在 `agents.default.json`，个人设置按助手编号保存在 `agents.local.json`，只在本机生效。
 
-**添加新助手**时，先取得用户同意，再在 `agents.default.json` 中复制一项，给它唯一的 `id`，填好显示名 `name`、卡片颜色 `color`、短图标 `icon`、开关 `enabled`、定位 `role` 和官方程序路径 `command`。多个候选路径可列成数组，按顺序查找。默认模型 `model` 可以留空。`kind` 选与该程序命令参数和输出格式兼容的适配方式（`codex`、`agy`、`claude`、`dsh`）。遇到新的命令行协议，需要补充对应的启动方式、事件翻译和测试；只有桌面程序的条目用 `desktop`。改好后再运行 `agents` 核对。
-
 **试用 DeepSeek** 时，指挥台使用 Harness 安装自带的命令行入口，直接启动官方程序，通过标准输入传任务。默认入口是 `D:\DeepSeek-Harness\resources\runtime\cli\bin\dsh.cmd`。总指挥可在沙箱外、在本项目目录运行 `.\scripts\try-deepseek.ps1`，用一条无关紧要的只读任务验证已登录账号，并采集真实回包。离线测试可单独验证指挥台对事件的处理。
+
+### 添加自定义助手
+
+先安装厂商的官方命令行工具，用自己的账号登录。**只接各家官方工具，不接中转服务。** 密钥和登录凭证交给工具自己保存，不要写进名单、参数或环境设置。
+
+在支持添加功能的「助手名单」面板里选「添加自定义助手」，或在指挥台目录运行 `agent-add`。保存后运行 `node dispatch.mjs agents`，确认对应一行标有「自定义」「已开启」「已找到程序」。把该行的编号交给 Claude，它就能按名单派活。也可以直接在 `agents.local.json` 的数组中添加一项。
+
+| 字段 | 怎么填 |
+|---|---|
+| `id`、`name` | 必填。编号用于派活，以小写字母或数字开头，其余可以用小写字母、数字和短横线。选一个还没用过的编号。名字用于显示，可写中文。 |
+| `command`、`kind` | 程序必填。填官方程序的完整路径，或已加入 PATH 的命令名。路径里可以有空格。自定义助手的适配方式是 `command`，面板和命令会自动填写。 |
+| `role`、`enabled` | 定位写它擅长做什么，方便 Claude 选人。开关填 `true` 或 `false`，默认开启。 |
+| `color`、`icon` | 选填。颜色用六位色号，如 `#4169D8`。图标可填简短文字或符号。 |
+| `args` | 启动时传给程序的参数，按顺序填写，每个参数单独一项。含空格的一项会整体交给程序。默认是空数组。 |
+| `input` | `stdin`（默认）通过标准输入把完整任务交给程序。`arg` 把任务作为最后一个参数；需要放在指定位置时，在 `args` 里写 `{prompt}`。 |
+| `output` | 普通逐行输出选 `text`（默认），最后一段是结果。工具每行输出一个 JSON 对象时选 `jsonl`，指挥台会识别常见消息和结果字段，也会显示不认识的行。 |
+| `resumeArgs` | 选填。接着对话时使用的**整组参数**，包括工具在续聊时仍需要的非交互参数。任务仍按 `input` 传入。工具要对话编号时，在相应位置写 `{session}`；工具能自行继续上次会话时，可直接填它的继续参数。省略此字段时，请重新派活。 |
+| `sessionPattern` | 选填。按工具的实际输出写一个匹配规则，用第一对捕获括号圈出对话编号。例如输出 `会话号 ABC-12`，可写 `会话号 ([A-Za-z0-9-]+)`。 |
+| `env` | 选填。给程序传普通环境设置，例如 `{"LANG":"zh_CN.UTF-8"}`。名称和值均为文字。 |
+
+**示例一 · 工具从标准输入读任务，输出普通文字。** 下列程序名和参数都是占位示例。**请按该工具官方文档填写非交互模式的参数**，确认它能逐行输出，并在任务结束后自行退出。这条命令适用于 Windows PowerShell，`--%` 用来保留后面 JSON 的引号，整条命令写在一行。
+
+```powershell
+node --% dispatch.mjs agent-add --id notes-cli --name 笔记助手 --command example-ai --args "[\"--print\"]" --input stdin --role 整理笔记
+```
+
+**示例二 · 工具通过参数接收任务，逐行输出 JSON，并支持按编号续聊。** 将下列对象作为一项放入 `agents.local.json` 的数组。这里假设工具会输出含有「会话号 ABC-12」的消息。把示例路径、参数和匹配规则换成官方工具实际使用的写法。
+
+```json
+{
+  "id": "review-cli",
+  "kind": "command",
+  "name": "资料复核助手",
+  "role": "复核资料并列出差异",
+  "command": "C:/官方工具/example-review.exe",
+  "args": ["--print", "--jsonl", "{prompt}"],
+  "input": "arg",
+  "output": "jsonl",
+  "resumeArgs": ["--print", "--jsonl", "--resume", "{session}", "{prompt}"],
+  "sessionPattern": "会话号 ([A-Za-z0-9-]+)"
+}
+```
+
+派活后可以在监控墙查看动态、跑偏提醒、选项和最终回复，也可以点「停止」。跑偏提醒依据工具实际输出的网址和文件操作。自定义助手暂不统计 token。要从名单移除示例助手，运行 `node dispatch.mjs agent-remove --id notes-cli`；旧任务记录仍可查看。内置助手可以在名单里关闭。
+
+Windows 上可以直接填 `.exe`、Node 入口或常见的 npm 启动脚本。带有自身初始化逻辑的 `.cmd`、`.bat` 建议选 `stdin`。如果工具必须通过参数接收含换行或命令符号的任务，请填官方的实际可执行文件或 Node 入口。
 
 ## 安装
 
@@ -241,6 +285,10 @@ agy 的浏览器功能是通过 Chrome 的远程调试连接**你平时用的 Ch
 # 查看助手名单；加 --json 可供程序读取
 node dispatch.mjs agents [--json]
 
+# 添加或移除本机的自定义助手
+node dispatch.mjs agent-add --id <编号> --name <显示名> --command <程序> [--args JSON数组] [--input stdin|arg] [--resume-args JSON数组] [--session-pattern 匹配规则] [--output text|jsonl] [--color 色号] [--role 定位] [--icon 图标] [--env JSON对象] [--enabled true|false]
+node dispatch.mjs agent-remove --id <编号>
+
 # 修改一个助手的个人设置，可以只改其中一项
 node dispatch.mjs agent-set --id <助手编号> [--enabled true|false] [--role <定位>] [--model <模型名>]
 
@@ -308,6 +356,7 @@ agy.exe --mode accept-edits --input-format stream-json --output-format stream-js
 ai指挥台/
 ├── agents.default.json     助手名单和默认分工
 ├── agents.cjs              读取名单、查找本机程序、保存个人设置
+├── command.mjs             自定义命令行助手的启动和逐行进度翻译
 ├── deepseek.mjs            DeepSeek Harness 启动方式和事件翻译
 ├── dispatch.mjs            调度器：启动助手、翻译事件、检查跑偏、接着对话继续
 ├── agy-children.mjs        辨认 agy 派出的子助手、跟踪记录和回报

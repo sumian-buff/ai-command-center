@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { listAgents, setAgent, dshPaths } from '../agents.cjs';
+import { listAgents, setAgent, dshPaths, addCustomAgent, removeCustomAgent, commandResumeNotice } from '../agents.cjs';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const runNode = promisify(execFile);
@@ -117,6 +117,92 @@ test('保存设置时可清理上次退出遗留的空锁目录', t => {
   setAgent('sample', { role: '复核' }, root);
   assert.equal(listAgents(root)[0].role, '复核');
   assert.equal(fs.existsSync(lock), false);
+});
+
+const custom = { id: 'local-2', name: '本机助手', command: process.execPath };
+
+test('自定义助手可单独增删和关闭，内置设置和默认文件保持原样', t => {
+  const root = setup(t, [example, { ...example, id: 'desk', kind: 'desktop' }]);
+  const original = fs.readFileSync(path.join(root, 'agents.default.json'));
+  setAgent('sample', { role: '已有的个人设置' }, root);
+  addCustomAgent(custom, root);
+  const [builtin, desktop, local] = listAgents(root);
+  assert.equal(builtin.custom, false);
+  assert.deepEqual(builtin.capabilities, { resume: true, tokens: true });
+  assert.deepEqual(desktop.capabilities, { resume: false, tokens: false });
+  assert.equal(local.custom, true);
+  assert.equal(local.found, true);
+  assert.equal(local.resolvedCommand, process.execPath);
+  assert.deepEqual([local.kind, local.input, local.output, local.args, local.enabled], ['command', 'stdin', 'text', [], true]);
+  assert.deepEqual(local.capabilities, { resume: false, tokens: false });
+  assert.match(commandResumeNotice(local, '123'), /重新派活/);
+  assert.equal(commandResumeNotice(builtin, null), '');
+
+  setAgent(custom.id, { enabled: false, role: '整理资料' }, root);
+  assert.deepEqual(listAgents(root).at(-1), { ...local, enabled: false, role: '整理资料' });
+  assert.throws(() => addCustomAgent(custom, root), /已有/);
+  assert.throws(() => removeCustomAgent('sample', root), /只能关闭/);
+  assert.throws(() => removeCustomAgent('missing', root), /名单中没有/);
+  removeCustomAgent(custom.id, root);
+  assert.deepEqual(listAgents(root), [builtin, desktop]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'agents.local.json'))), [{ id: 'sample', role: '已有的个人设置' }]);
+  assert.deepEqual(fs.readFileSync(path.join(root, 'agents.default.json')), original);
+});
+
+test('手工填写的自定义助手可以从 PATH 找到，续聊支持固定参数和编号占位', t => {
+  const root = setup(t);
+  const bin = path.join(root, '命令 文件夹');
+  fs.mkdirSync(bin);
+  const cmd = 'some-tool.v1';
+  const file = path.join(bin, cmd + (process.platform === 'win32' ? '.cmd' : ''));
+  fs.writeFileSync(file, '', { mode: 0o755 });
+  if (process.platform === 'win32') fs.writeFileSync(path.join(bin, cmd), '#!/bin/sh');
+  const oldPath = process.env.PATH;
+  process.env.PATH = bin;
+  t.after(() => { if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath; });
+
+  const entry = { ...custom, kind: 'command', args: ['--print', '中文 空格'], command: cmd,
+    input: 'arg', output: 'jsonl', env: { LANG: 'zh_CN', MAX_TOKENS: '500' }, resumeArgs: ['--id={session}'], sessionPattern: 'id=(.+)' };
+  fs.writeFileSync(path.join(root, 'agents.local.json'), JSON.stringify([entry]));
+  const item = listAgents(root).at(-1);
+  assert.equal(path.relative(file, item.resolvedCommand), '');
+  assert.deepEqual(item.args, entry.args);
+  assert.deepEqual(item.capabilities, { resume: true, tokens: false });
+  assert.match(commandResumeNotice(item, null), /对话编号/);
+  assert.equal(commandResumeNotice(item, 'session-123'), '');
+  assert.equal(commandResumeNotice({ ...item, resumeArgs: ['--continue'] }, null), '');
+});
+
+test('拒绝非法自定义字段、覆盖内置助手和密钥设置，保留已保存的本地名单', t => {
+  const root = setup(t);
+  const localFile = path.join(root, 'agents.local.json');
+  addCustomAgent(custom, root);
+  const saved = fs.readFileSync(localFile);
+  const other = { ...custom, id: 'other' };
+  for (const patch of [{ id: 'sample' }, { id: 'Sample' }, { id: 'a_b' }, { id: '../other' }, { id: 'nul' },
+    { kind: 'dsh' }, { name: false }, { command: ' ' }, { command: [] }, { command: 'bad\0path' },
+    { args: 'abc' }, { args: [3] }, { args: Array(1) }, { resumeArgs: null }, { color: '#fff' }, { icon: '<svg></svg>' },
+    { role: [] }, { enabled: 1 }, { input: 'file' }, { output: 'json' }, { sessionPattern: false }, { sessionPattern: '[' },
+    { env: [] }, { env: { 'x=y': 'no' } }, { env: { LANG: false } }, { env: { API_KEY: 'fake' } },
+    { env: { ACCESS_TOKEN: 'fake' } }, { env: { PROFILE: 'Bearer fake-value' } }, { apiKey: 'fake' }]) {
+    assert.throws(() => addCustomAgent({ ...other, ...patch }, root), undefined, JSON.stringify(patch));
+    assert.deepEqual(fs.readFileSync(localFile), saved);
+  }
+  fs.writeFileSync(localFile, JSON.stringify([{ id: 'sample', kind: 'command', command: process.execPath }]));
+  assert.throws(() => listAgents(root), /不能修改/);
+  fs.writeFileSync(localFile, JSON.stringify([{ ...custom, env: { PASSWORD: 'fake' } }]));
+  assert.throws(() => listAgents(root), /密钥/);
+});
+
+test('两个进程同时添加同一自定义助手，只保存其中一次', async t => {
+  const root = setup(t);
+  const script = 'require(process.argv[1]).addCustomAgent(JSON.parse(process.argv[2]), process.argv[3])';
+  const add = () => runNode(process.execPath, ['-e', script, path.join(repo, 'agents.cjs'), JSON.stringify(custom), root],
+    { windowsHide: true });
+  const results = await Promise.allSettled([add(), add()]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.match(results.find(result => result.status === 'rejected').reason.stderr, /已有/);
+  assert.deepEqual(listAgents(root).map(entry => entry.id), ['sample', custom.id]);
 });
 
 test('两个独立进程同时保存开关和定位，两项改动都保留；已退出的写入者不再占锁', async t => {
