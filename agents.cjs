@@ -62,7 +62,9 @@ function customDefinition(def) {
   for (const field of Object.keys(def)) {
     if (!customFields.has(field)) throw new Error(`自定义助手没有「${field}」这个设置。`);
   }
-  const entry = { kind: 'command', enabled: true, role: '自定义命令行助手', color: '#64748b', icon: 'AI',
+  // 没给图标时，用名字的第一个字（英文取首字母大写）当图标
+  const firstChar = [...String(def.name || def.id || '').trim()][0];
+  const entry = { kind: 'command', enabled: true, role: '自定义命令行助手', color: '#64748b', icon: firstChar ? firstChar.toUpperCase() : 'AI',
     input: 'stdin', output: 'text', args: [], ...def };
   if (!hasText(entry.id) || !/^[a-z0-9][a-z0-9-]*$/.test(entry.id) || reservedId.test(entry.id)) {
     throw new Error('自定义助手编号请使用小写字母、数字和短横线，以字母或数字开头，并避开保留名称。');

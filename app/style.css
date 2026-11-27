@@ -554,7 +554,7 @@ body.cool .ag-list { background: var(--canvas-bg); }
 .ag-empty b { font-size: 14px; color: var(--ink-main); }
 .ag-empty.is-err b { color: var(--st-block); }
 
-.ag-card { position: relative; background: var(--card-bg); border: 1px solid var(--line-soft); border-radius: var(--r); padding: 11px 13px 10px 15px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; transition: border-color .15s ease; }
+.ag-card { flex: none; position: relative; background: var(--card-bg); border: 1px solid var(--line-soft); border-radius: var(--r); padding: 11px 13px 10px 15px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; transition: border-color .15s ease; }
 .ag-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--v-color); }
 body.cool .ag-card { border-color: var(--line-outer); padding-left: 13px; }
 body.cool .ag-card::before { bottom: auto; width: 9px; height: 9px; background: none; border-top: 2px solid var(--v-color); border-left: 2px solid var(--v-color); }
